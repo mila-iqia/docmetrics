@@ -1,0 +1,7 @@
+- question: "What is the best location to use to store model checkpoints the Mila cluster?"
+  answers:
+    - $SCRATCH
+    - $SLURM_TMPDIR
+    - $HOME
+    - $DATASETS
+  correct_answer: $SCRATCH
