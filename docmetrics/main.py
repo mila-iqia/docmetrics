@@ -42,7 +42,7 @@ class Response(pydantic.BaseModel):
 
 def evaluate_llm(
     questions: list[Question],
-    # context: str | None = None,
+    with_docs: bool,
     model: str = "gemini-2.5-flash",
     tools: Sequence[types.Tool | Callable] | None = None,
 ) -> int:
@@ -50,44 +50,27 @@ def evaluate_llm(
 
     Returns the number of correct answers.
     """
+    tools = list(tools) if tools else []
+    if with_docs:
+        tools.append(types.Tool(url_context=types.UrlContext()))
+
     correct_answers = 0
     invalid_answers = 0
     for question in questions:
-        answers_block = (
-            "\n"
-            + "\n".join(f"{i + 1}. {answer}" for i, answer in enumerate(question.answers))
-            + "\n"
-        )
-        possible_answers = (
-            ", ".join(str(i + 1) for i in range(len(question.answers) - 1))
-            + f" or {len(question.answers)}"
-        )
-        contents = (
-            (
-                (
-                    "Based on these pages of documentation: "
-                    + ", ".join(question.docs_urls)
-                    + "\n\n"
-                )
-                if question.docs_urls
-                else ""
-            )
-            # + ((context + "\n\n") if context else "")
-            + "Select the correct answer to the following question:\n"
-            + f"- {question.question}\n"
-            + answers_block
-            + f"Only provide the answer as a single integer with no explanation: ({possible_answers}):\n"
-        )
+        contents = make_content(question, with_docs=with_docs)
         logger.debug(f"Prompt sent to LLM: {contents}")
+
         response = client.models.generate_content(
             model=model,
             contents=contents,
             config=types.GenerateContentConfig(
+                # This response_mime_type can only be set if using the gemini-3-pro model.
+                # https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools
                 response_mime_type="application/json"
                 if not tools and model == "gemini-2.5-flash"
                 else None,
                 response_json_schema=Response.model_json_schema(),
-                tools=list(tools) if tools else None,
+                tools=tools,
             ),
         )
         assert response.candidates
@@ -96,7 +79,9 @@ def evaluate_llm(
                 f"Consulted URLs: {response.candidates[0].url_context_metadata.url_metadata}"
             )
         assert response.text
-        logger.info(f"Agent response: {response.text}")
+        logger.info(
+            f"Correct answer: {question.correct_answer!r}, Agent response: {response.text}"
+        )
 
         agent_answer: int | None = None
         try:
@@ -118,6 +103,30 @@ def evaluate_llm(
         if agent_answer == correct_answer:
             correct_answers += 1
     return correct_answers
+
+
+def make_content(question: Question, with_docs: bool) -> str:
+    answers_block = (
+        "\n" + "\n".join(f"{i + 1}. {answer}" for i, answer in enumerate(question.answers)) + "\n"
+    )
+    possible_answers = (
+        ", ".join(str(i + 1) for i in range(len(question.answers) - 1))
+        + f" or {len(question.answers)}"
+    )
+    contents = (
+        (
+            ("Based on these pages of documentation: " + ", ".join(question.docs_urls) + "\n\n")
+            if question.docs_urls and with_docs
+            else ""
+        )
+        # + ((context + "\n\n") if context else "")
+        + "Select the correct answer to the following question:\n"
+        + f"- {question.question}\n"
+        + answers_block
+        + f"Only provide the answer as a single integer with no explanation: ({possible_answers}):\n"
+    )
+
+    return contents
 
 
 def _ok[T](v: T | None) -> T:
@@ -144,21 +153,12 @@ def main():
     )
 
     questions = load_questions(questions_path=questions_path)
-    score_with_no_context = evaluate_llm(questions, context=None, model=model)
-    print(f"{score_with_no_context=}")
+    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
 
-    mila_docs_urls = [
-        "https://docs.mila.quebec",
-        "https://docs.mila.quebec/Information_storage.html",
-    ]
-    score_with_mila_docs_url = evaluate_llm(
-        questions,
-        context="Consult the Mila technical documentation using these URLs before answering:\n"
-        + "\n".join(f" - {url}" for url in mila_docs_urls),
-        tools=[types.Tool(url_context=types.UrlContext())],
-        model=model,
-    )
-    print(f"{score_with_mila_docs_url=}")
+    score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
+
+    print(f"{score_with_no_context=}")
+    print(f"{score_with_mila_docs_urls=}")
 
 
 if __name__ == "__main__":

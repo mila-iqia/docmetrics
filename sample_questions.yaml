@@ -1,7 +1,17 @@
-- question: "Which of these is the best location to use to store model checkpoints the Mila cluster?"
+- question: "Which of these is the best location to use to store temporary model checkpoints on the Mila cluster?"
   answers:
     - $SCRATCH
     - $SLURM_TMPDIR
     - $HOME
     - $DATASETS
   correct_answer: $SCRATCH
+  docs_urls:
+    - "https://docs.mila.quebec/Information_storage.html"
+- question: "Which of these is the best location to use to store project code on the Mila cluster?"
+  answers:
+    - $SCRATCH
+    - $SLURM_TMPDIR
+    - $HOME
+  correct_answer: $HOME
+  docs_urls:
+    - "https://docs.mila.quebec/Information_storage.html"
