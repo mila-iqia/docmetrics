@@ -1,0 +1,8 @@
+# Changes here will be overwritten by Copier
+_commit: v0.0.4
+_src_path: gh:lebrice/tool_template
+project_description: A new project/tool called docmetrics.
+python_version: '3.14'
+tool_name: docmetrics
+your_email: normandf@mila.quebec
+your_name: Fabrice Normandin
