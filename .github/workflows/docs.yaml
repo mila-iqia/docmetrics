@@ -15,7 +15,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           version: "latest"
-          enable-cache: true  # no need, uses the local uv cache.
+          enable-cache: true # no need, uses the local uv cache.
           # https://github.com/astral-sh/setup-uv?tab=readme-ov-file#github-authentication-token
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache-suffix: "3.14"
@@ -24,9 +24,13 @@ jobs:
         run: uv python pin 3.14
 
       - name: Install dependencies
-        run: uv sync --extra docs --frozen
+        run: uv sync --frozen
+
+      - name: Build docs in strict mode
+        run: uv run mkdocs build --strict
 
       - name: Deploy docs
+        if: false # todo: re-enable this job once we make this package public.
         run: uv run mkdocs gh-deploy --force
         # note: Checking if we really need the one below:
         # uses: mhausenblas/mkdocs-deploy-gh-pages@1.9
