@@ -55,11 +55,24 @@ def evaluate_llm(
 ) -> int:
     """Evaluates an LLM on some questions with/without documentation as context.
 
-    Returns the number of correct answers.
+    Parameters
+    ----------
+    questions : list[Question]
+        The list of questions to ask the LLM.
+    with_docs : bool
+        Whether to provide documentation URLs as context to the LLM.
+    model : str
+        The name of the LLM model to use.
+    tools : Sequence[types.Tool | Callable] | None
+        Additional tools to provide to the LLM.
+
+    Returns
+    -------
+    The number of correct answers.
     """
     tools = list(tools) if tools else []
     if with_docs:
-        # Adding this give the LLM the ability to consult URLs given in the prompt.
+        # Adding this gives the LLM the ability to consult URLs given in the prompt.
         tools.append(types.Tool(url_context=types.UrlContext()))
 
     correct_answers = 0
@@ -94,7 +107,7 @@ def ask_question(
     """
     prompt = make_prompt(question, with_docs=with_docs)
     logger.debug(f"Prompt sent to LLM: {prompt}")
-
+    # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     response = client.models.generate_content(
         model=model,
         contents=prompt,
