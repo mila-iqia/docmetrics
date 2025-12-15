@@ -88,6 +88,10 @@ def ask_question(
     model: str,
     tools: list[types.Tool | Callable] | None,
 ) -> bool | None:
+    """Asks a question to the LLM and returns whether the LLM answered correctly.
+
+    Returns None if the LLM's answer was invalid.
+    """
     prompt = make_prompt(question, with_docs=with_docs)
     logger.debug(f"Prompt sent to LLM: {prompt}")
 
