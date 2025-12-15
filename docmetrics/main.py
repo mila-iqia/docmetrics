@@ -18,21 +18,29 @@ client = genai.Client()
 @dataclass
 class Question:
     question: str
+    """The question to ask the LLM."""
+
     answers: list[str]
+    """A list of possible answers to the question."""
+
     correct_answer: str
+    """The correct answer to the question (must be one of the options in `answers`)."""
 
     docs_urls: list[str] | None = None
+    """A list of URLs to relevant documentation pages.
+
+    The hope is that by reading these pages, the LLM can answer the question more accurately. Note
+    that the LLMs are not going to look at links within these pages, only the content of these
+    pages itself. For example, giving a link to docs.mila.quebec wouldn't be very helpful.
+    """
 
     def __postinit__(self):
         assert self.correct_answer in self.answers, "correct answer isn't in the options!"
 
 
-def load_questions(questions_path: Path) -> list[Question]:
-    return [Question(**q) for q in yaml.safe_load(questions_path.read_text())]
-
-
 class Response(pydantic.BaseModel):
     answer: int = pydantic.Field(description="The selected answer (integer).", ge=1)
+
     justification: str = pydantic.Field(
         description="A brief justification for the selected answer.",
         default="",
@@ -68,6 +76,10 @@ def evaluate_llm(
         else:
             correct_answers += int(result)
     return correct_answers
+
+
+def load_questions(questions_path: Path) -> list[Question]:
+    return [Question(**q) for q in yaml.safe_load(questions_path.read_text())]
 
 
 def ask_question(
