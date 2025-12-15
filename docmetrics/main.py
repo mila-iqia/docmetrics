@@ -11,8 +11,6 @@ import rich.logging
 import logging
 
 logger = logging.getLogger(__name__)
-# The client gets the API key from the environment variable `GEMINI_API_KEY`.
-client = genai.Client()
 
 
 @dataclass
@@ -50,6 +48,7 @@ class Response(pydantic.BaseModel):
 
 
 def evaluate_llm(
+    client: genai.Client,
     questions: list[Question],
     with_docs: bool,
     model: str = "gemini-2.5-flash",
@@ -81,7 +80,8 @@ def evaluate_llm(
     invalid_answers = 0
     for question in questions:
         result = ask_question(
-            question,
+            client=client,
+            question=question,
             with_docs=with_docs,
             model=model,
             tools=tools,
@@ -98,6 +98,7 @@ def load_questions(questions_path: Path) -> list[Question]:
 
 
 def ask_question(
+    client: genai.Client,
     question: Question,
     with_docs: bool,
     model: str,
@@ -212,9 +213,11 @@ def main():
         logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
     )
 
+    # The client gets the API key from the environment variable `GEMINI_API_KEY`.
+    client = genai.Client()
     questions = load_questions(questions_path=questions_path)
-    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
-    score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
+    score_with_no_context = evaluate_llm(client, questions, with_docs=False, model=model)
+    score_with_mila_docs_urls = evaluate_llm(client, questions, with_docs=True, model=model)
 
     print(f"{score_with_no_context=}")
     print(f"{score_with_mila_docs_urls=}")
