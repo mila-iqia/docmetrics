@@ -147,8 +147,8 @@ def get_llm_answer_from_response(response_str: str) -> Response | None:
     response schema.
 
     >>> example_response = 'This description perfectly matches the requirement for storing "temporary model checkpoints".2'
-    >>> get_llm_answer_from_response(response)
-    2
+    >>> get_llm_answer_from_response(example_response)
+    Response(answer=2, justification='This description perfectly matches the requirement for storing "temporary model checkpoints".')
     """
     try:
         last_line = response_str.strip().splitlines()[-1].strip().removesuffix(".")
@@ -158,7 +158,10 @@ def get_llm_answer_from_response(response_str: str) -> Response | None:
             logger.error(f"Invalid response: {response_str}")
             return None
         last_word = last_char.group(0)
-        return Response(answer=int(last_word), justification=response_str)
+        return Response(
+            answer=int(last_word),
+            justification=response_str.strip().removesuffix(last_word).strip(),
+        )
     except ValueError:
         logger.error(f"Invalid response: {response_str}")
         return None
