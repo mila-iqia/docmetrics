@@ -40,11 +40,13 @@ class Question:
 
 class Response(pydantic.BaseModel):
     answer: int = pydantic.Field(description="The selected answer (integer).", ge=1)
+    """The selected answer index (1-indexed).
 
-    justification: str = pydantic.Field(
-        description="A brief justification for the selected answer.",
-        default="",
-    )
+    1: first answer, 2: second answer, etc.
+    """
+
+    justification: str = ""
+    """A brief justification for the selected answer."""
 
 
 def evaluate_llm(

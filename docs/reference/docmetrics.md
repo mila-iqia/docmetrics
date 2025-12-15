@@ -1,3 +1,1 @@
-<!-- ::: docmetrics -->
-
-::: docmetrics.main
+::: docmetrics
