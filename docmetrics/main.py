@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+import re
 from typing import Callable, Sequence
 import pydantic
 from pydantic.dataclasses import dataclass
@@ -30,14 +31,12 @@ def load_questions(questions_path: Path) -> list[Question]:
     return [Question(**q) for q in yaml.safe_load(questions_path.read_text())]
 
 
-doc_url = "https://docs.mila.quebec"
-
-# Retrieve and encode the PDF byte
-# doc_data = httpx.get(doc_url).content
-
-
 class Response(pydantic.BaseModel):
     answer: int = pydantic.Field(description="The selected answer (integer).", ge=1)
+    justification: str = pydantic.Field(
+        description="A brief justification for the selected answer.",
+        default="",
+    )
 
 
 def evaluate_llm(
@@ -46,66 +45,97 @@ def evaluate_llm(
     model: str = "gemini-2.5-flash",
     tools: Sequence[types.Tool | Callable] | None = None,
 ) -> int:
-    """Evaluates a given LLM with the given questions and context.
+    """Evaluates an LLM on some questions with/without documentation as context.
 
     Returns the number of correct answers.
     """
     tools = list(tools) if tools else []
     if with_docs:
+        # Adding this give the LLM the ability to consult URLs given in the prompt.
         tools.append(types.Tool(url_context=types.UrlContext()))
 
     correct_answers = 0
     invalid_answers = 0
     for question in questions:
-        contents = make_content(question, with_docs=with_docs)
-        logger.debug(f"Prompt sent to LLM: {contents}")
-
-        response = client.models.generate_content(
+        result = ask_question(
+            question,
+            with_docs=with_docs,
             model=model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                # This response_mime_type can only be set if using the gemini-3-pro model.
-                # https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools
-                response_mime_type="application/json"
-                if not tools and model == "gemini-2.5-flash"
-                else None,
-                response_json_schema=Response.model_json_schema(),
-                tools=tools,
-            ),
+            tools=tools,
         )
-        assert response.candidates
-        if response.candidates[0].url_context_metadata:
-            logger.debug(
-                f"Consulted URLs: {response.candidates[0].url_context_metadata.url_metadata}"
-            )
-        assert response.text
-        logger.info(
-            f"Correct answer: {question.correct_answer!r}, Agent response: {response.text}"
-        )
-
-        agent_answer: int | None = None
-        try:
-            agent_answer = Response.model_validate_json(response.text).answer
-        except pydantic.ValidationError:
-            pass
-        if agent_answer is None:
-            try:
-                last_line = response.text.strip().splitlines()[-1].strip().removesuffix(".")
-                last_word = last_line.split()[-1]
-                agent_answer = int(last_word)
-            except ValueError:
-                logger.error(f"Invalid guess: {response.text}")
-                invalid_answers += 1
-                continue
-
-        correct_answer = question.answers.index(question.correct_answer) + 1
-        logger.debug(f"LLM answer: {agent_answer}, correct answer: {correct_answer}")
-        if agent_answer == correct_answer:
-            correct_answers += 1
+        if result is None:
+            invalid_answers += 1
+        else:
+            correct_answers += int(result)
     return correct_answers
 
 
-def make_content(question: Question, with_docs: bool) -> str:
+def ask_question(
+    question: Question,
+    with_docs: bool,
+    model: str,
+    tools: list[types.Tool | Callable] | None,
+) -> bool | None:
+    prompt = make_prompt(question, with_docs=with_docs)
+    logger.debug(f"Prompt sent to LLM: {prompt}")
+
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            # This response_mime_type can only be set if using the gemini-3-pro model.
+            # https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools
+            response_mime_type=(
+                "application/json" if not tools and model == "gemini-2.5-flash" else None
+            ),
+            response_json_schema=Response.model_json_schema(),
+            tools=tools,
+        ),
+    )
+    assert response.candidates
+    if response.candidates[0].url_context_metadata:
+        logger.debug(f"Consulted URLs: {response.candidates[0].url_context_metadata.url_metadata}")
+    assert response.text
+
+    agent_answer: Response | None = None
+    try:
+        agent_answer = Response.model_validate_json(response.text)
+    except pydantic.ValidationError:
+        agent_answer = get_llm_answer_from_response(response.text)
+
+    if agent_answer is None:
+        logger.error(f"Invalid response: {response.text}")
+        return None
+
+    correct_answer = question.answers.index(question.correct_answer) + 1
+    logger.info(f"Correct answer: {correct_answer}, LLM's answer: {agent_answer.answer}")
+    logger.debug(f"LLM's justification: {agent_answer.justification}")
+    return agent_answer.answer == correct_answer
+
+
+def get_llm_answer_from_response(response_str: str) -> Response | None:
+    """Extracts the LLM's answer from the response object when the LLM doesn't follow the requested
+    response schema.
+
+    >>> example_response = 'This description perfectly matches the requirement for storing "temporary model checkpoints".2'
+    >>> get_llm_answer_from_response(response)
+    2
+    """
+    try:
+        last_line = response_str.strip().splitlines()[-1].strip().removesuffix(".")
+        # todo: if the last character is a digit, use this as the LLM's guess.
+        last_char = re.search(r"\d+$", last_line)
+        if not last_char:
+            logger.error(f"Invalid response: {response_str}")
+            return None
+        last_word = last_char.group(0)
+        return Response(answer=int(last_word), justification=response_str)
+    except ValueError:
+        logger.error(f"Invalid response: {response_str}")
+        return None
+
+
+def make_prompt(question: Question, with_docs: bool) -> str:
     answers_block = (
         "\n" + "\n".join(f"{i + 1}. {answer}" for i, answer in enumerate(question.answers)) + "\n"
     )
@@ -116,22 +146,17 @@ def make_content(question: Question, with_docs: bool) -> str:
     contents = (
         (
             ("Based on these pages of documentation: " + ", ".join(question.docs_urls) + "\n\n")
-            if question.docs_urls and with_docs
+            if with_docs and question.docs_urls
             else ""
         )
         # + ((context + "\n\n") if context else "")
         + "Select the correct answer to the following question:\n"
         + f"- {question.question}\n"
         + answers_block
-        + f"Only provide the answer as a single integer with no explanation: ({possible_answers}):\n"
+        + f"Provide the answer as an integer: ({possible_answers}):\n"
     )
 
     return contents
-
-
-def _ok[T](v: T | None) -> T:
-    assert v is not None
-    return v
 
 
 def main():
@@ -147,6 +172,7 @@ def main():
     logging.basicConfig(
         level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
         handlers=[rich.logging.RichHandler()],
+        format="%(message)s",
     )
     logger.setLevel(
         logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
@@ -154,7 +180,6 @@ def main():
 
     questions = load_questions(questions_path=questions_path)
     score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
-
     score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
 
     print(f"{score_with_no_context=}")
