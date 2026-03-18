@@ -24,7 +24,15 @@ uv tool install docmetrics
 
 ## Usage
 
+To see available options, run:
+
 ```console
-docmetrics --help
+uv run docmetrics --help
 ```
 
+To test it out, you first need to setup the GEMINI_API_KEY environment variable with your Google API key. Then, you can run: 
+
+
+```console
+uv run docmetrics --questions sample_questions.yaml
+```

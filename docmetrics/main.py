@@ -103,7 +103,11 @@ def evaluate_llm(
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
     client = get_google_genai_client()
-
+    # for model_config in client.models.list().page:
+    #     if model_config.supported_actions and "generateContent" in model_config.supported_actions:
+    #         logger.info(f"Available model: {model_config.name}")
+    #         logger.debug(f"Model config: {model_config}")
+    # exit()
     num_questions = len(questions)
     correct_answers = 0
     invalid_answers = 0
@@ -146,6 +150,13 @@ def ask_question(
 
     Returns None if the LLM's answer was invalid.
     """
+
+    # TODO: For a lot of the models available through Google AI Studio, they cant
+    # use tools to fetch the docs content. It *might* be worthwhile to actually fetch,
+    # parse, and embed the page into the prompt ourselves for those models to get results with mode models.
+    # OR, we could switch to something like VertexAI and see if we have access to more models with tool use
+    # there.
+
     prompt = make_prompt(question, with_docs=with_docs)
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
