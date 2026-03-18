@@ -1,10 +1,11 @@
 import argparse
+import dataclasses
 import functools
 import logging
 import re
 import warnings
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import Callable, Literal
 
 import pydantic
 import rich.logging
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 Letter = Literal["A", "B", "C", "D", "E"]
 
 
-@dataclass
+@dataclass(frozen=True)
 class Question:
     question: str
     """The question to ask the LLM."""
@@ -59,12 +60,24 @@ def get_google_genai_client():
     return genai.Client()
 
 
+@dataclasses.dataclass(frozen=True)
+class EvaluationResult:
+    num_questions: int
+    correct_answers: int
+    invalid_answers: int
+
+    @property
+    def score(self) -> float:
+        """The percentage of questions that the LLM answered correctly."""
+        return self.correct_answers / self.num_questions if self.num_questions > 0 else 0.0
+
+
 def evaluate_llm(
     questions: list[Question],
     with_docs: bool,
     model: str,
-    tools: Sequence[types.Tool | Callable] | None = None,
-) -> int:
+    # tools: Sequence[types.Tool | Callable] | None = None,
+) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
 
     Parameters
@@ -72,18 +85,15 @@ def evaluate_llm(
     questions: The list of questions to ask the LLM.
     with_docs: Whether to provide documentation URLs as context to the LLM.
     model: The name of the LLM model to use.
-    tools: Additional tools to provide to the LLM.
+    # tools: Additional tools to provide to the LLM.
 
     Returns
     -------
-    The number of correct answers.
+    The evaluation results.
     """
     client = get_google_genai_client()
-    tools = list(tools) if tools else []
-    if with_docs:
-        # Adding this gives the LLM the ability to consult URLs given in the prompt.
-        tools.append(types.Tool(url_context=types.UrlContext()))
 
+    num_questions = len(questions)
     correct_answers = 0
     invalid_answers = 0
 
@@ -96,13 +106,18 @@ def evaluate_llm(
             question=question,
             with_docs=with_docs,
             model=model,
-            tools=tools,
+            # Adding this gives the LLM the ability to consult URLs given in the prompt.
+            tools=[types.Tool(url_context=types.UrlContext())] if with_docs else None,
         )
         if result is None:
             invalid_answers += 1
         else:
             correct_answers += int(result)
-    return correct_answers
+    return EvaluationResult(
+        num_questions=num_questions,
+        correct_answers=correct_answers,
+        invalid_answers=invalid_answers,
+    )
 
 
 def load_questions(questions_path: Path) -> list[Question]:
@@ -123,12 +138,10 @@ def ask_question(
     prompt = make_prompt(question, with_docs=with_docs)
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
-    response, agent_answer = fetch_api_response(client, model, tools, prompt)
-
-    if agent_answer is None:
-        logger.error(f"Invalid response: {response.text}")
+    agent_answer = get_agent_answer(client, model, tools, prompt)
+    if not agent_answer:
+        logger.error("LLM's answer couldn't be parsed!")
         return None
-
     # correct_answer = question.options[question.answer]
     logger.info(f"Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
     if agent_answer.justification:
@@ -136,13 +149,13 @@ def ask_question(
     return agent_answer.answer == question.answer
 
 
-def fetch_api_response(
+def get_agent_answer(
     client: genai.Client,
     model: str,
     tools: list[types.Tool | Callable] | None,
     prompt: str,
-):
-    response = client.models.generate_content(
+) -> Response | None:
+    api_response = client.models.generate_content(
         model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -155,13 +168,13 @@ def fetch_api_response(
             tools=tools,
         ),
     )
-    assert response.candidates
+    assert api_response.candidates
 
-    if len(response.candidates) > 1:
+    if len(api_response.candidates) > 1:
         warnings.warn(
-            f"Response contained {len(response.candidates)} candidates, but only the first one will be used!"
+            f"Response contained {len(api_response.candidates)} candidates, but only the first one will be used!"
         )
-    for candidate in response.candidates:
+    for candidate in api_response.candidates:
         # todo: look into this maybe?
         # logger.debug(
         #     f"Grounding metadata for candidate {candidate.index}: {candidate.grounding_metadata}"
@@ -186,18 +199,15 @@ def fetch_api_response(
                 )
             )
 
-    agent_answer: Response | None = None
-
-    if isinstance(response.parsed, Response):
+    if isinstance(api_response.parsed, Response):
         logger.debug("LLM output was correctly parsed by the client library.")
-        agent_answer = response.parsed
-    else:
-        assert response.text is not None
-        try:
-            agent_answer = Response.model_validate_json(response.text)
-        except pydantic.ValidationError:
-            agent_answer = parse_response_fallback(response.text)
-    return response, agent_answer
+        return api_response.parsed
+
+    assert api_response.text is not None
+    try:
+        return Response.model_validate_json(api_response.text)
+    except pydantic.ValidationError:
+        return parse_response_fallback(api_response.text)
 
 
 def parse_response_fallback(response_str: str) -> Response | None:
