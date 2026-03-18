@@ -1,16 +1,20 @@
 import argparse
-from pathlib import Path
+import logging
 import re
-from typing import Callable, Sequence
+from pathlib import Path
+from typing import Callable, Literal, Sequence
+
 import pydantic
-from pydantic.dataclasses import dataclass
+import rich.logging
 import yaml
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-import rich.logging
-import logging
+from pydantic.dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+Letter = Literal["A", "B", "C", "D", "E"]
 
 
 @dataclass
@@ -18,11 +22,11 @@ class Question:
     question: str
     """The question to ask the LLM."""
 
-    answers: list[str]
+    options: dict[Letter, str]
     """A list of possible answers to the question."""
 
-    correct_answer: str
-    """The correct answer to the question (must be one of the options in `answers`)."""
+    answer: Letter
+    """The correct answer to the question (must be one of the letters in `options`)."""
 
     docs_urls: list[str] | None = None
     """A list of URLs to relevant documentation pages.
@@ -33,16 +37,15 @@ class Question:
     """
 
     def __postinit__(self):
-        assert self.correct_answer in self.answers, "correct answer isn't in the options!"
+        assert self.answer in self.options, "correct answer isn't in the options!"
 
 
 class Response(pydantic.BaseModel):
-    answer: int = pydantic.Field(description="The selected answer (integer).", ge=1)
-    """The selected answer index (1-indexed).
+    answer: Letter
+    """The selected answer."""
 
-    1: first answer, 2: second answer, etc.
-    """
-
+    # TODO: Check if adding this 'justification' is actually helpful, and whether it increases costs.
+    # Seems like it might just be extra tokens to generate, for our purposes.
     justification: str = ""
     """A brief justification for the selected answer."""
 
@@ -51,21 +54,17 @@ def evaluate_llm(
     client: genai.Client,
     questions: list[Question],
     with_docs: bool,
-    model: str = "gemini-2.5-flash",
+    model: str,
     tools: Sequence[types.Tool | Callable] | None = None,
 ) -> int:
     """Evaluates an LLM on some questions with/without documentation as context.
 
     Parameters
     ----------
-    questions : list[Question]
-        The list of questions to ask the LLM.
-    with_docs : bool
-        Whether to provide documentation URLs as context to the LLM.
-    model : str
-        The name of the LLM model to use.
-    tools : Sequence[types.Tool | Callable] | None
-        Additional tools to provide to the LLM.
+    questions: The list of questions to ask the LLM.
+    with_docs: Whether to provide documentation URLs as context to the LLM.
+    model: The name of the LLM model to use.
+    tools: Additional tools to provide to the LLM.
 
     Returns
     -------
@@ -78,6 +77,10 @@ def evaluate_llm(
 
     correct_answers = 0
     invalid_answers = 0
+
+    # TODO: Group questions based on the docs pages they require and use the batch API
+    # to ask multiple questions at once with the same context.
+
     for question in questions:
         result = ask_question(
             client=client,
@@ -109,7 +112,7 @@ def ask_question(
     Returns None if the LLM's answer was invalid.
     """
     prompt = make_prompt(question, with_docs=with_docs)
-    logger.debug(f"Prompt sent to LLM: {prompt}")
+    logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     response = client.models.generate_content(
         model=model,
@@ -125,45 +128,79 @@ def ask_question(
         ),
     )
     assert response.candidates
-    if response.candidates[0].url_context_metadata:
-        logger.debug(f"Consulted URLs: {response.candidates[0].url_context_metadata.url_metadata}")
+
+    logger.debug(f"There were {len(response.candidates)} response candidates from the LLM.")
+    for candidate in response.candidates:
+        # todo: look into this maybe?
+        logger.debug(
+            f"Grounding metadata for candidate {candidate.index}: {candidate.grounding_metadata}"
+        )
+        if (consulted_urls := candidate.url_context_metadata) and consulted_urls.url_metadata:
+            logger.info(
+                f"The LLM consulted {len(consulted_urls.url_metadata)} web pages to answer the question."
+            )
+            logger.debug(
+                "Consulted URLs: "
+                + "\n".join(
+                    "- "
+                    + (url_meta.retrieved_url or "n/a")
+                    + " "
+                    + (
+                        "(success)"
+                        if url_meta.url_retrieval_status
+                        == types.UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS
+                        else "(failure)"
+                    )
+                    for url_meta in consulted_urls.url_metadata
+                )
+            )
+
     assert response.text
 
     agent_answer: Response | None = None
-    try:
-        agent_answer = Response.model_validate_json(response.text)
-    except pydantic.ValidationError:
-        agent_answer = get_llm_answer_from_response(response.text)
+
+    if isinstance(response.parsed, Response):
+        logger.debug("LLM output was correctly parsed by the client library.")
+        agent_answer = response.parsed
+    else:
+        try:
+            agent_answer = Response.model_validate_json(response.text)
+        except pydantic.ValidationError:
+            agent_answer = parse_response(response.text)
 
     if agent_answer is None:
         logger.error(f"Invalid response: {response.text}")
         return None
 
-    correct_answer = question.answers.index(question.correct_answer) + 1
-    logger.info(f"Correct answer: {correct_answer}, LLM's answer: {agent_answer.answer}")
-    logger.debug(f"LLM's justification: {agent_answer.justification}")
-    return agent_answer.answer == correct_answer
+    # correct_answer = question.options[question.answer]
+    logger.info(f"Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
+    if agent_answer.justification:
+        logger.debug(f"LLM's justification: {agent_answer.justification}")
+    return agent_answer.answer == question.answer
 
 
-def get_llm_answer_from_response(response_str: str) -> Response | None:
-    """Extracts the LLM's answer from the response object when the LLM doesn't follow the requested
-    response schema.
+def parse_response(response_str: str) -> Response | None:
+    """Parses a `Response` object from the API output when the LLM doesn't follow the requested response schema.
 
-    >>> example_response = 'This description perfectly matches the requirement for storing "temporary model checkpoints".2'
-    >>> get_llm_answer_from_response(example_response)
-    Response(answer=2, justification='This description perfectly matches the requirement for storing "temporary model checkpoints".')
+    >>> get_llm_answer_from_response('A')
+    Response(answer='A', justification='')
+
+    >>> get_llm_answer_from_response('This description perfectly matches the requirement for storing "temporary model checkpoints". Answer: A')
+    Response(answer='A', justification='This description perfectly matches the requirement for storing "temporary model checkpoints".')
     """
     try:
         last_line = response_str.strip().splitlines()[-1].strip().removesuffix(".")
-        # todo: if the last character is a digit, use this as the LLM's guess.
-        last_char = re.search(r"\d+$", last_line)
+        # todo: if the last word is a single letter (capitalised or not), use this as the LLM's guess.
+        last_char = re.search(r"\b([A-Ea-e])\b", last_line)
         if not last_char:
             logger.error(f"Invalid response: {response_str}")
             return None
-        last_word = last_char.group(0)
+        last_char = last_char.group(0)
+        last_char = last_char.upper()
+        assert last_char in ("A", "B", "C", "D", "E")
         return Response(
-            answer=int(last_word),
-            justification=response_str.strip().removesuffix(last_word).strip(),
+            answer=last_char,
+            justification=response_str.strip().removesuffix(last_char).strip(),
         )
     except ValueError:
         logger.error(f"Invalid response: {response_str}")
@@ -171,31 +208,22 @@ def get_llm_answer_from_response(response_str: str) -> Response | None:
 
 
 def make_prompt(question: Question, with_docs: bool) -> str:
-    answers_block = (
-        "\n" + "\n".join(f"{i + 1}. {answer}" for i, answer in enumerate(question.answers)) + "\n"
-    )
-    possible_answers = (
-        ", ".join(str(i + 1) for i in range(len(question.answers) - 1))
-        + f" or {len(question.answers)}"
-    )
-    contents = (
+    return (
         (
-            ("Based on these pages of documentation: " + ", ".join(question.docs_urls) + "\n\n")
+            ("Based on this documentation: " + ", ".join(question.docs_urls) + ",\n")
             if with_docs and question.docs_urls
             else ""
         )
         # + ((context + "\n\n") if context else "")
         + "Select the correct answer to the following question:\n"
-        + f"- {question.question}\n"
-        + answers_block
-        + f"Provide the answer as an integer: ({possible_answers}):\n"
+        + f"{question.question}\n"
+        + "\n".join(f"- {letter}: {answer}" for letter, answer in question.options.items())
+        + "\n"
     )
-
-    return contents
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.MetavarTypeHelpFormatter)
     parser.add_argument("--questions", type=Path, required=True)
     parser.add_argument("-v", "--verbose", action="count")
     parser.add_argument("--model", type=str, default="gemini-2.5-flash")
@@ -206,13 +234,14 @@ def main():
 
     logging.basicConfig(
         level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
-        handlers=[rich.logging.RichHandler()],
+        handlers=[rich.logging.RichHandler(markup=True)],
         format="%(message)s",
     )
-    logger.setLevel(
+    logger.setLevel(  # this logger specifically.
         logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
     )
 
+    load_dotenv()  # reads variables from a .env file and sets them in os.environ
     # The client gets the API key from the environment variable `GEMINI_API_KEY`.
     client = genai.Client()
     questions = load_questions(questions_path=questions_path)
