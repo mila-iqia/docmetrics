@@ -27,3 +27,4 @@ uv tool install docmetrics
 ```console
 docmetrics --help
 ```
+

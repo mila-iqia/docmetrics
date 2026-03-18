@@ -18,6 +18,14 @@ from pydantic.dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 Letter = Literal["A", "B", "C", "D", "E"]
+__all__ = [
+    "evaluate_llm",
+    "ask_question",
+    "load_questions",
+    "Question",
+    "Response",
+    "EvaluationResult",
+]
 
 
 @dataclass(frozen=True)
@@ -85,11 +93,14 @@ def evaluate_llm(
     questions: The list of questions to ask the LLM.
     with_docs: Whether to provide documentation URLs as context to the LLM.
     model: The name of the LLM model to use.
-    # tools: Additional tools to provide to the LLM.
 
     Returns
     -------
     The evaluation results.
+
+
+    Notes
+    - Could also input a list of tools to give to the agent, in addition to URL search.
     """
     client = get_google_genai_client()
 
@@ -217,7 +228,7 @@ def parse_response_fallback(response_str: str) -> Response | None:
     Response(answer='A', justification='')
 
     >>> parse_response_fallback('This description perfectly matches the requirement for storing "temporary model checkpoints". Answer: A')
-    Response(answer='A', justification='This description perfectly matches the requirement for storing "temporary model checkpoints".')
+    Response(answer='A', justification='This description perfectly matches the requirement for storing "temporary model checkpoints". Answer:')
     """
     try:
         last_line = response_str.strip().splitlines()[-1].strip().removesuffix(".")

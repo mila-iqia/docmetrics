@@ -11,7 +11,10 @@ markdown_extensions:
   - pymdownx.snippets
   - pymdownx.superfences
   - pymdownx.magiclink
-
+nav:
+  - Setup: index.md
+  - Usage: usage.md
+  - Reference: reference.md
 plugins:
   - search
   - mkdocstrings:

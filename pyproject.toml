@@ -30,6 +30,9 @@ dev = [
 testpaths = ["docmetrics", "tests"]
 norecursedirs = [".venv"]
 addopts = ["--doctest-modules"]
+filterwarnings = [
+    "ignore:'_UnionGenericAlias' is deprecated and slated for removal in Python 3.17:DeprecationWarning:google.genai.types:",
+]
 
 [tool.uv]
 managed = true
