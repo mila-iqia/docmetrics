@@ -1,6 +1,8 @@
 import argparse
+import functools
 import logging
 import re
+import warnings
 from pathlib import Path
 from typing import Callable, Literal, Sequence
 
@@ -50,8 +52,14 @@ class Response(pydantic.BaseModel):
     """A brief justification for the selected answer."""
 
 
+@functools.cache
+def get_google_genai_client():
+    load_dotenv()  # reads variables from a .env file and sets them in os.environ
+    # The client gets the API key from the environment variable `GEMINI_API_KEY`.
+    return genai.Client()
+
+
 def evaluate_llm(
-    client: genai.Client,
     questions: list[Question],
     with_docs: bool,
     model: str,
@@ -70,6 +78,7 @@ def evaluate_llm(
     -------
     The number of correct answers.
     """
+    client = get_google_genai_client()
     tools = list(tools) if tools else []
     if with_docs:
         # Adding this gives the LLM the ability to consult URLs given in the prompt.
@@ -114,6 +123,25 @@ def ask_question(
     prompt = make_prompt(question, with_docs=with_docs)
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
+    response, agent_answer = fetch_api_response(client, model, tools, prompt)
+
+    if agent_answer is None:
+        logger.error(f"Invalid response: {response.text}")
+        return None
+
+    # correct_answer = question.options[question.answer]
+    logger.info(f"Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
+    if agent_answer.justification:
+        logger.debug(f"LLM's justification: {agent_answer.justification}")
+    return agent_answer.answer == question.answer
+
+
+def fetch_api_response(
+    client: genai.Client,
+    model: str,
+    tools: list[types.Tool | Callable] | None,
+    prompt: str,
+):
     response = client.models.generate_content(
         model=model,
         contents=prompt,
@@ -129,12 +157,15 @@ def ask_question(
     )
     assert response.candidates
 
-    logger.debug(f"There were {len(response.candidates)} response candidates from the LLM.")
+    if len(response.candidates) > 1:
+        warnings.warn(
+            f"Response contained {len(response.candidates)} candidates, but only the first one will be used!"
+        )
     for candidate in response.candidates:
         # todo: look into this maybe?
-        logger.debug(
-            f"Grounding metadata for candidate {candidate.index}: {candidate.grounding_metadata}"
-        )
+        # logger.debug(
+        #     f"Grounding metadata for candidate {candidate.index}: {candidate.grounding_metadata}"
+        # )
         if (consulted_urls := candidate.url_context_metadata) and consulted_urls.url_metadata:
             logger.info(
                 f"The LLM consulted {len(consulted_urls.url_metadata)} web pages to answer the question."
@@ -155,37 +186,27 @@ def ask_question(
                 )
             )
 
-    assert response.text
-
     agent_answer: Response | None = None
 
     if isinstance(response.parsed, Response):
         logger.debug("LLM output was correctly parsed by the client library.")
         agent_answer = response.parsed
     else:
+        assert response.text is not None
         try:
             agent_answer = Response.model_validate_json(response.text)
         except pydantic.ValidationError:
-            agent_answer = parse_response(response.text)
-
-    if agent_answer is None:
-        logger.error(f"Invalid response: {response.text}")
-        return None
-
-    # correct_answer = question.options[question.answer]
-    logger.info(f"Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
-    if agent_answer.justification:
-        logger.debug(f"LLM's justification: {agent_answer.justification}")
-    return agent_answer.answer == question.answer
+            agent_answer = parse_response_fallback(response.text)
+    return response, agent_answer
 
 
-def parse_response(response_str: str) -> Response | None:
+def parse_response_fallback(response_str: str) -> Response | None:
     """Parses a `Response` object from the API output when the LLM doesn't follow the requested response schema.
 
-    >>> get_llm_answer_from_response('A')
+    >>> parse_response_fallback('A')
     Response(answer='A', justification='')
 
-    >>> get_llm_answer_from_response('This description perfectly matches the requirement for storing "temporary model checkpoints". Answer: A')
+    >>> parse_response_fallback('This description perfectly matches the requirement for storing "temporary model checkpoints". Answer: A')
     Response(answer='A', justification='This description perfectly matches the requirement for storing "temporary model checkpoints".')
     """
     try:
@@ -241,12 +262,9 @@ def main():
         logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
     )
 
-    load_dotenv()  # reads variables from a .env file and sets them in os.environ
-    # The client gets the API key from the environment variable `GEMINI_API_KEY`.
-    client = genai.Client()
     questions = load_questions(questions_path=questions_path)
-    score_with_no_context = evaluate_llm(client, questions, with_docs=False, model=model)
-    score_with_mila_docs_urls = evaluate_llm(client, questions, with_docs=True, model=model)
+    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
+    score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
 
     print(f"{score_with_no_context=}")
     print(f"{score_with_mila_docs_urls=}")
