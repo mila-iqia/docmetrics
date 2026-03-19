@@ -1,0 +1,163 @@
+name: DocMetrics
+description: >
+  Evaluate documentation quality and post a score comparison comment on pull requests.
+
+inputs:
+  questions-file:
+    description: >
+      Path to the questions YAML file, relative to the caller's repository root.
+    required: true
+  model:
+    description: LLM model to use.
+    required: false
+    default: gemini-2.5-flash
+  gemini-api-key:
+    description: >
+      Google Gemini API key. Required for Gemini models; omit when using
+      'test:dummy' or non-Gemini models.
+    required: false
+  github-token:
+    description: GitHub token used to post the PR comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  score-with-docs:
+    description: Score when documentation URLs are provided as context (0.0–1.0).
+    value: ${{ steps.parse-outputs.outputs.score-with-docs }}
+  score-without-docs:
+    description: Score when no documentation context is provided (0.0–1.0).
+    value: ${{ steps.parse-outputs.outputs.score-without-docs }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.14"
+
+    - name: Install docmetrics
+      shell: bash
+      run: pip install "${{ github.action_path }}"
+
+    - name: Run docmetrics on current branch
+      id: run-current
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+      run: |
+        docmetrics \
+          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
+          --model "${{ inputs.model }}" \
+          --output-format json \
+          | tee /tmp/docmetrics-current.json
+
+    - name: Prepare base branch comparison
+      id: prep-base
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        git fetch origin "${{ github.base_ref }}" --depth=1
+
+        if git show "origin/${{ github.base_ref }}:${{ inputs.questions-file }}" \
+            > /tmp/base-questions.yaml 2>/dev/null; then
+          BASE_HASH=$(sha256sum /tmp/base-questions.yaml | cut -d' ' -f1)
+          # Sanitize the ref so it is safe to use as a cache key component.
+          BASE_REF_SAFE=$(echo "${{ github.base_ref }}" | tr '/' '-')
+          echo "cache-key=docmetrics-${BASE_REF_SAFE}-${BASE_HASH}-${{ inputs.model }}" \
+            >> "$GITHUB_OUTPUT"
+          echo "has-base-questions=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "Questions file not found on base branch; skipping comparison." >&2
+          echo "has-base-questions=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Restore base branch cache
+      id: cache-restore
+      if: github.event_name == 'pull_request' && steps.prep-base.outputs.has-base-questions == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: /tmp/docmetrics-base.json
+        key: ${{ steps.prep-base.outputs.cache-key }}
+
+    - name: Run docmetrics on base branch (cache miss)
+      if: >-
+        github.event_name == 'pull_request' &&
+        steps.prep-base.outputs.has-base-questions == 'true' &&
+        steps.cache-restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+      run: |
+        docmetrics \
+          --questions /tmp/base-questions.yaml \
+          --model "${{ inputs.model }}" \
+          --output-format json \
+          | tee /tmp/docmetrics-base.json
+
+    - name: Save base branch cache
+      if: >-
+        github.event_name == 'pull_request' &&
+        steps.prep-base.outputs.has-base-questions == 'true' &&
+        steps.cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /tmp/docmetrics-base.json
+        key: ${{ steps.prep-base.outputs.cache-key }}
+
+    - name: Parse step outputs
+      id: parse-outputs
+      shell: bash
+      run: |
+        python3 - <<'EOF'
+        import json, os
+        with open("/tmp/docmetrics-current.json") as f:
+            d = json.load(f)
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write(f"score-with-docs={d['with_docs']['score']}\n")
+            out.write(f"score-without-docs={d['without_docs']['score']}\n")
+        EOF
+
+    - name: Post PR comment
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        BASE_ARGS=""
+        if [ -f /tmp/docmetrics-base.json ]; then
+          BASE_ARGS="--base /tmp/docmetrics-base.json"
+          if [ "${{ steps.cache-restore.outputs.cache-hit }}" == "true" ]; then
+            BASE_ARGS="$BASE_ARGS --base-source cached"
+          else
+            BASE_ARGS="$BASE_ARGS --base-source computed"
+          fi
+        fi
+
+        python3 "${{ github.action_path }}/.github/scripts/format_comment.py" \
+          --current /tmp/docmetrics-current.json \
+          $BASE_ARGS \
+          --questions-file "${{ inputs.questions-file }}" \
+          --model "${{ inputs.model }}" \
+          --base-ref "${{ github.base_ref }}" \
+          > /tmp/docmetrics-comment.md
+
+        PR_NUMBER="${{ github.event.pull_request.number }}"
+        REPO="${{ github.repository }}"
+
+        # Update existing comment if one exists (identified by the <!-- docmetrics --> marker),
+        # otherwise create a new one.
+        EXISTING_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+          --jq '.[] | select(.body | contains("<!-- docmetrics -->")) | .id' \
+          | head -1)
+
+        if [ -n "$EXISTING_ID" ]; then
+          gh api --method PATCH \
+            "repos/$REPO/issues/comments/$EXISTING_ID" \
+            -f body="$(cat /tmp/docmetrics-comment.md)"
+        else
+          gh api --method POST \
+            "repos/$REPO/issues/$PR_NUMBER/comments" \
+            -f body="$(cat /tmp/docmetrics-comment.md)"
+        fi
