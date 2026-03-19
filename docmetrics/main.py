@@ -159,7 +159,7 @@ def ask_question(
         logger.info(f"Correct answer: {question.answer}, dummy answer: {dummy_answer}")
         return dummy_answer == question.answer
 
-    # TODO: For a lot of the models available through Google AI Studio, they cant
+    # TODO: For a lot of the models available through Google AI Studio, they can't
     # use tools to fetch the docs content. It *might* be worthwhile to actually fetch,
     # parse, and embed the page into the prompt ourselves for those models to get results with mode models.
     # OR, we could switch to something like VertexAI and see if we have access to more models with tool use
