@@ -1,3 +1,4 @@
+import json
 import random
 import typing
 from unittest.mock import MagicMock, patch
@@ -246,3 +247,118 @@ def test_evaluate_llm_without_docs_no_url_tool():
         assert not any(isinstance(t, types.Tool) and t.url_context is not None for t in tools), (
             "Did not expect a UrlContext tool when with_docs=False"
         )
+
+
+
+# ---------------------------------------------------------------------------
+# main() CLI tests
+# ---------------------------------------------------------------------------
+
+
+def _make_all_correct_side_effects(questions, n_passes):
+    """Return side_effect list for n_passes over questions, all answers correct."""
+    return [make_fake_response(q.answer) for q in questions] * n_passes
+
+
+def test_main_no_docs_urls_runs_baseline_only(tmp_path, capsys):
+    """Without --docs-urls, only the without-docs pass runs."""
+    import yaml
+
+    questions_file = tmp_path / "questions.yaml"
+    questions_file.write_text(
+        yaml.dump([{"question": "Q?", "options": {"A": "opt1", "B": "opt2"}, "answer": "A"}])
+    )
+
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        client.models.generate_content.side_effect = [make_fake_response("A")]
+
+        with patch("sys.argv", ["docmetrics", "evaluate", "--questions", str(questions_file), "--output", "json"]):
+            from docmetrics.main import main
+            main()
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "without_docs" in data
+    assert "with_docs" not in data
+    assert client.models.generate_content.call_count == 1
+
+
+def test_main_with_docs_urls_runs_both_passes(tmp_path, capsys):
+    """With --docs-urls and no --with-docs-only, both passes run."""
+    import yaml
+
+    questions_file = tmp_path / "questions.yaml"
+    questions_file.write_text(
+        yaml.dump([{"question": "Q?", "options": {"A": "opt1", "B": "opt2"}, "answer": "A"}])
+    )
+
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        client.models.generate_content.side_effect = [make_fake_response("A"), make_fake_response("A")]
+
+        with patch("sys.argv", ["docmetrics", "evaluate", "--questions", str(questions_file), "--output", "json", "--docs-urls", "https://docs.example.com"]):
+            from docmetrics.main import main
+            main()
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "without_docs" in data
+    assert "with_docs" in data
+
+
+def test_main_with_docs_only(tmp_path, capsys):
+    """--with-docs-only skips the without-docs pass."""
+    import yaml
+
+    questions_file = tmp_path / "questions.yaml"
+    questions_file.write_text(
+        yaml.dump([{"question": "Q?", "options": {"A": "opt1", "B": "opt2"}, "answer": "A"}])
+    )
+
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        client.models.generate_content.side_effect = [make_fake_response("A")]
+
+        with patch("sys.argv", ["docmetrics", "evaluate", "--questions", str(questions_file), "--output", "json", "--docs-urls", "https://docs.example.com", "--with-docs-only"]):
+            from docmetrics.main import main
+            main()
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "with_docs" in data
+    assert "without_docs" not in data
+    assert client.models.generate_content.call_count == 1
+
+
+def test_main_docs_urls_appear_in_prompt(tmp_path, capsys):
+    """--docs-urls passes URLs to the prompt."""
+    import yaml
+
+    questions_file = tmp_path / "questions.yaml"
+    questions_file.write_text(
+        yaml.dump([{"question": "Q?", "options": {"A": "opt1", "B": "opt2"}, "answer": "A"}])
+    )
+
+    captured_prompts = []
+
+    def fake_generate(model, contents, config):
+        captured_prompts.append(contents)
+        return make_fake_response("A")
+
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        client.models.generate_content.side_effect = fake_generate
+
+        with patch(
+            "sys.argv",
+            ["docmetrics", "evaluate", "--questions", str(questions_file), "--with-docs-only", "--docs-urls", "https://docs.example.com/page1"],
+        ):
+            from docmetrics.main import main
+            main()
+
+    assert any("https://docs.example.com/page1" in p for p in captured_prompts)

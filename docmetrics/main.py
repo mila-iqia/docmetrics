@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Callable, Literal
 
 import pydantic
+import questionary
+import rich.console
 import rich.logging
+import rich_argparse
 import yaml
 from dotenv import load_dotenv
 from google import genai
@@ -25,6 +28,7 @@ DUMMY_MODEL = "test:dummy"
 """A model name that returns a random answer without calling any external API."""
 __all__ = [
     "evaluate_llm",
+    "run_quiz",
     "ask_question",
     "load_questions",
     "Question",
@@ -285,26 +289,81 @@ def make_prompt(question: Question, with_docs: bool) -> str:
     )
 
 
+def run_quiz(questions: list[Question]) -> EvaluationResult:
+    """Runs an interactive quiz where a human answers multiple-choice questions."""
+    console = rich.console.Console()
+    total = len(questions)
+    correct_answers = 0
+    invalid_answers = 0
+
+    for i, question in enumerate(questions, start=1):
+        console.print(f"\n[bold]Question {i}/{total}[/bold] [dim](Ctrl+C or q to quit)[/dim]")
+        choices = [f"{letter}: {text}" for letter, text in question.options.items()]
+        choices.append("q: Quit")
+        selected = questionary.select(question.question, choices=choices).ask()
+        if selected is None or selected == "q: Quit":
+            console.print("[dim]Quiz aborted.[/dim]")
+            break
+        selected_letter = selected.split(":")[0].strip()
+        if selected_letter == question.answer:
+            console.print("[green]✓ Correct![/green]")
+            correct_answers += 1
+        else:
+            correct_text = question.options[question.answer]
+            console.print(
+                f"[red]✗ Wrong! The correct answer was {question.answer}: {correct_text}[/red]"
+            )
+
+    result = EvaluationResult(
+        num_questions=total,
+        correct_answers=correct_answers,
+        invalid_answers=invalid_answers,
+    )
+    console.print(f"\n[bold]Final score: {correct_answers}/{total} ({result.score:.0%})[/bold]")
+    return result
+
+
 def main():
-    parser = argparse.ArgumentParser(formatter_class=argparse.MetavarTypeHelpFormatter)
-    parser.add_argument("--questions", type=Path, required=True)
+    parser = argparse.ArgumentParser(
+        formatter_class=rich_argparse.ArgumentDefaultsRichHelpFormatter
+    )
     parser.add_argument("-v", "--verbose", action="count")
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="gemini-2.5-flash",
-        help='LLM model to use (e.g. "gemini-2.5-flash"). Use "test:dummy" for random answers without any API calls.',
-    )
-    parser.add_argument(
-        "--output-format",
-        choices=["text", "json"],
-        default="text",
-        help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
-    )
+
+    # evaluate flags live on the top-level parser so they work without a subcommand
+    def _add_eval_args(parser):
+        parser.add_argument("--questions", type=Path)
+        parser.add_argument("--docs-urls", type=str, nargs="+")
+        parser.add_argument("--with-docs-only", action="store_true")
+        parser.add_argument(
+            "--output-format",
+            choices=["text", "json"],
+            default="text",
+            help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
+        )
+        parser.add_argument(
+            "--model",
+            type=str,
+            default="gemini-2.5-flash",
+            help='LLM model to use (e.g. "gemini-2.5-flash"). Use "test:dummy" for random answers without any API calls.',
+        )
+
+    _add_eval_args(parser)
+
+    parser.set_defaults(command="evaluate")
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    quiz_parser = subparsers.add_parser("quiz")
+    quiz_parser.add_argument("--questions", type=Path, required=True)
+
+    eval_parser = subparsers.add_parser("evaluate")
+    _add_eval_args(eval_parser)
+
     args = parser.parse_args()
-    questions_path: Path = args.questions
+    if args.command == "evaluate" and args.questions is None:
+        parser.error("the following arguments are required: --questions")
     verbose: int = args.verbose or 0
-    model: str = args.model
+    questions_path = Path(args.questions)
 
     logging.basicConfig(
         level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
@@ -316,31 +375,43 @@ def main():
     )
 
     questions = load_questions(questions_path=questions_path)
-    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
+    if args.command == "quiz":
+        run_quiz(questions)
+        return
+
+    with_docs_only: bool = args.with_docs_only
+    output_format: Literal["text", "json"] = args.output_format
+    model: str = args.model
+
+    score_with_no_context = None
+    if not with_docs_only:
+        score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
     score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
 
-    if args.output_format == "json":
-        print(
-            json.dumps(
-                {
-                    "without_docs": {
-                        "num_questions": score_with_no_context.num_questions,
-                        "correct_answers": score_with_no_context.correct_answers,
-                        "invalid_answers": score_with_no_context.invalid_answers,
-                        "score": score_with_no_context.score,
-                    },
-                    "with_docs": {
-                        "num_questions": score_with_mila_docs_urls.num_questions,
-                        "correct_answers": score_with_mila_docs_urls.correct_answers,
-                        "invalid_answers": score_with_mila_docs_urls.invalid_answers,
-                        "score": score_with_mila_docs_urls.score,
-                    },
-                }
-            )
-        )
-    else:
+    if output_format == "text":
         print(f"{score_with_no_context=}")
         print(f"{score_with_mila_docs_urls=}")
+        return
+    to_print = {}
+    if score_with_no_context:
+        to_print.update(
+            {
+                "without_docs": {
+                    "num_questions": score_with_no_context.num_questions,
+                    "correct_answers": score_with_no_context.correct_answers,
+                    "invalid_answers": score_with_no_context.invalid_answers,
+                    "score": score_with_no_context.score,
+                }
+            }
+        )
+    to_print["with_docs"] = {
+        "num_questions": score_with_mila_docs_urls.num_questions,
+        "correct_answers": score_with_mila_docs_urls.correct_answers,
+        "invalid_answers": score_with_mila_docs_urls.invalid_answers,
+        "score": score_with_mila_docs_urls.score,
+    }
+    print(json.dumps(to_print))
+    return
 
 
 if __name__ == "__main__":
