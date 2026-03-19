@@ -391,32 +391,31 @@ def main():
     ]
 
     score_with_no_context = None
+    score_with_docs = None
     if not with_docs_only:
         score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
-    score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
+    if docs_urls or with_docs_only:
+        score_with_docs = evaluate_llm(questions, with_docs=True, model=model)
 
     if output_format == "text":
         print(f"{score_with_no_context=}")
-        print(f"{score_with_mila_docs_urls=}")
+        print(f"{score_with_docs=}")
         return
     to_print = {}
     if score_with_no_context:
-        to_print.update(
-            {
-                "without_docs": {
-                    "num_questions": score_with_no_context.num_questions,
-                    "correct_answers": score_with_no_context.correct_answers,
-                    "invalid_answers": score_with_no_context.invalid_answers,
-                    "score": score_with_no_context.score,
-                }
-            }
-        )
-    to_print["with_docs"] = {
-        "num_questions": score_with_mila_docs_urls.num_questions,
-        "correct_answers": score_with_mila_docs_urls.correct_answers,
-        "invalid_answers": score_with_mila_docs_urls.invalid_answers,
-        "score": score_with_mila_docs_urls.score,
-    }
+        to_print["without_docs"] = {
+            "num_questions": score_with_no_context.num_questions,
+            "correct_answers": score_with_no_context.correct_answers,
+            "invalid_answers": score_with_no_context.invalid_answers,
+            "score": score_with_no_context.score,
+        }
+    if score_with_docs:
+        to_print["with_docs"] = {
+            "num_questions": score_with_docs.num_questions,
+            "correct_answers": score_with_docs.correct_answers,
+            "invalid_answers": score_with_docs.invalid_answers,
+            "score": score_with_docs.score,
+        }
     print(json.dumps(to_print))
     return
 

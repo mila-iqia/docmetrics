@@ -1,3 +1,4 @@
+from typing import Sequence
 from unittest.mock import MagicMock, patch
 
 from docmetrics.main import Question, run_quiz
@@ -13,9 +14,12 @@ QUESTIONS = [
 ]
 
 
-def _quiz_answers(answers: list[str | None]):
+def _quiz_answers(answers: Sequence[str | None]):
     """Patch questionary.select so .ask() returns successive values from `answers`."""
-    return patch("docmetrics.main.questionary.select", return_value=MagicMock(ask=MagicMock(side_effect=answers)))
+    return patch(
+        "docmetrics.main.questionary.select",
+        return_value=MagicMock(ask=MagicMock(side_effect=answers)),
+    )
 
 
 def test_run_quiz_all_correct():
