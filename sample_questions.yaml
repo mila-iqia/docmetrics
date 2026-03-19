@@ -1,17 +1,69 @@
-- question: "Which of these is the best location to use to store temporary model checkpoints on the Mila cluster?"
+- question: "What does DocMetrics measure?"
   options:
-    A: $SCRATCH
-    B: $SLURM_TMPDIR
-    C: $HOME
-    D: $DATASETS
-  answer: A
+    A: Code coverage across a project's test suite
+    B: Documentation usefulness by comparing LLM accuracy with and without docs as context
+    C: API response times for documentation endpoints
+    D: The readability score of documentation prose
+  answer: B
   docs_urls:
-    - "https://docs.mila.quebec"
-- question: "Which of these is the best location to use to store project code on the Mila cluster?"
+    - "https://mila-iqia.github.io/docmetrics"
+
+- question: "How does DocMetrics decide whether documentation is useful?"
   options:
-    A: $SCRATCH
-    B: $SLURM_TMPDIR
-    C: $HOME
+    A: By counting the total number of words in the documentation pages
+    B: By asking human reviewers to rate each page
+    C: By comparing the LLM's correct-answer rate with docs context versus without docs context
+    D: By running automated linting rules against the documentation source
   answer: C
   docs_urls:
-    - "https://docs.mila.quebec"
+    - "https://mila-iqia.github.io/docmetrics"
+
+- question: "What is the default LLM model used by docmetrics when no --model flag is provided?"
+  options:
+    A: gpt-4o
+    B: claude-3-5-sonnet
+    C: gemini-2.5-flash
+    D: llama-3-70b
+  answer: C
+  docs_urls:
+    - "https://mila-iqia.github.io/docmetrics"
+
+- question: "Which CLI subcommand lets you take the quiz interactively in the terminal?"
+  options:
+    A: "docmetrics run"
+    B: "docmetrics quiz"
+    C: "docmetrics evaluate"
+    D: "docmetrics interactive"
+  answer: B
+  docs_urls:
+    - "https://mila-iqia.github.io/docmetrics"
+
+- question: "What does the special model name 'test:dummy' do?"
+  options:
+    A: Calls the Gemini API with a test API key
+    B: Always selects the first answer option
+    C: Returns a random answer without making any external API calls
+    D: Runs a cached replay of a previous Gemini response
+  answer: C
+  docs_urls:
+    - "https://mila-iqia.github.io/docmetrics"
+
+- question: "What does passing --output-format json to docmetrics produce?"
+  options:
+    A: A formatted Markdown table of per-question results
+    B: A machine-readable JSON object with scores, suitable for CI pipelines
+    C: A JSON Lines file with one entry per question
+    D: An OpenAPI schema describing the output structure
+  answer: B
+  docs_urls:
+    - "https://mila-iqia.github.io/docmetrics"
+
+- question: "What is the purpose of the docs_urls field in a docmetrics question YAML entry?"
+  options:
+    A: Links to GitHub issues related to the question topic
+    B: URLs to images embedded in the question text
+    C: URLs that the LLM can fetch to obtain documentation context when answering
+    D: Source citations required for legal attribution
+  answer: C
+  docs_urls:
+    - "https://mila-iqia.github.io/docmetrics"
