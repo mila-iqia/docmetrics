@@ -1,6 +1,7 @@
 import argparse
 import dataclasses
 import functools
+import json
 import logging
 import random
 import re
@@ -294,6 +295,12 @@ def main():
         default="gemini-2.5-flash",
         help='LLM model to use (e.g. "gemini-2.5-flash"). Use "test:dummy" for random answers without any API calls.',
     )
+    parser.add_argument(
+        "--output-format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
+    )
     args = parser.parse_args()
     questions_path: Path = args.questions
     verbose: int = args.verbose or 0
@@ -312,8 +319,28 @@ def main():
     score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
     score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
 
-    print(f"{score_with_no_context=}")
-    print(f"{score_with_mila_docs_urls=}")
+    if args.output_format == "json":
+        print(
+            json.dumps(
+                {
+                    "without_docs": {
+                        "num_questions": score_with_no_context.num_questions,
+                        "correct_answers": score_with_no_context.correct_answers,
+                        "invalid_answers": score_with_no_context.invalid_answers,
+                        "score": score_with_no_context.score,
+                    },
+                    "with_docs": {
+                        "num_questions": score_with_mila_docs_urls.num_questions,
+                        "correct_answers": score_with_mila_docs_urls.correct_answers,
+                        "invalid_answers": score_with_mila_docs_urls.invalid_answers,
+                        "score": score_with_mila_docs_urls.score,
+                    },
+                }
+            )
+        )
+    else:
+        print(f"{score_with_no_context=}")
+        print(f"{score_with_mila_docs_urls=}")
 
 
 if __name__ == "__main__":
