@@ -89,6 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Upload coverage reports to Codecov
     timeout-minutes: 5
+    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6

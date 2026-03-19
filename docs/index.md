@@ -30,7 +30,7 @@ To see available options, run:
 uv run docmetrics --help
 ```
 
-To test it out, you first need to setup the GEMINI_API_KEY environment variable with your Google API key. Then, you can run: 
+To test it out, you first need to setup the GEMINI_API_KEY environment variable with your Google API key. Then, you can run:
 
 
 ```console
