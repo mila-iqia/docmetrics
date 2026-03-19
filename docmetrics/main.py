@@ -1,6 +1,7 @@
 import argparse
 import dataclasses
 import functools
+import json
 import logging
 import re
 import warnings
@@ -39,14 +40,6 @@ class Question:
     answer: Letter
     """The correct answer to the question (must be one of the letters in `options`)."""
 
-    docs_urls: list[str] | None = None
-    """A list of URLs to relevant documentation pages.
-
-    The hope is that by reading these pages, the LLM can answer the question more accurately. Note
-    that the LLMs are not going to look at links within these pages, only the content of these
-    pages itself. For example, giving a link to docs.mila.quebec wouldn't be very helpful.
-    """
-
     def __postinit__(self):
         assert self.answer in self.options, "correct answer isn't in the options!"
 
@@ -84,6 +77,7 @@ def evaluate_llm(
     questions: list[Question],
     with_docs: bool,
     model: str,
+    docs_urls: list[str] | None = None,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
@@ -93,6 +87,7 @@ def evaluate_llm(
     questions: The list of questions to ask the LLM.
     with_docs: Whether to provide documentation URLs as context to the LLM.
     model: The name of the LLM model to use.
+    docs_urls: URLs to documentation pages, shared across all questions.
 
     Returns
     -------
@@ -103,11 +98,6 @@ def evaluate_llm(
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
     client = get_google_genai_client()
-    # for model_config in client.models.list().page:
-    #     if model_config.supported_actions and "generateContent" in model_config.supported_actions:
-    #         logger.info(f"Available model: {model_config.name}")
-    #         logger.debug(f"Model config: {model_config}")
-    # exit()
     num_questions = len(questions)
     correct_answers = 0
     invalid_answers = 0
@@ -121,6 +111,7 @@ def evaluate_llm(
             question=question,
             with_docs=with_docs,
             model=model,
+            docs_urls=docs_urls,
             # Adding this gives the LLM the ability to consult URLs given in the prompt.
             tools=[types.Tool(url_context=types.UrlContext())] if with_docs else None,
         )
@@ -135,6 +126,7 @@ def evaluate_llm(
     )
 
 
+
 def load_questions(questions_path: Path) -> list[Question]:
     return [Question(**q) for q in yaml.safe_load(questions_path.read_text())]
 
@@ -145,6 +137,7 @@ def ask_question(
     with_docs: bool,
     model: str,
     tools: list[types.Tool | Callable] | None,
+    docs_urls: list[str] | None = None,
 ) -> bool | None:
     """Asks a question to the LLM and returns whether the LLM answered correctly.
 
@@ -157,7 +150,7 @@ def ask_question(
     # OR, we could switch to something like VertexAI and see if we have access to more models with tool use
     # there.
 
-    prompt = make_prompt(question, with_docs=with_docs)
+    prompt = make_prompt(question, with_docs=with_docs, docs_urls=docs_urls)
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     agent_answer = get_agent_answer(client, model, tools, prompt)
@@ -260,11 +253,11 @@ def parse_response_fallback(response_str: str) -> Response | None:
         return None
 
 
-def make_prompt(question: Question, with_docs: bool) -> str:
+def make_prompt(question: Question, with_docs: bool, docs_urls: list[str] | None = None) -> str:
     return (
         (
-            ("Based on this documentation: " + ", ".join(question.docs_urls) + ",\n")
-            if with_docs and question.docs_urls
+            ("Based on this documentation: " + ", ".join(docs_urls) + ",\n")
+            if with_docs and docs_urls
             else ""
         )
         # + ((context + "\n\n") if context else "")
@@ -280,6 +273,9 @@ def main():
     parser.add_argument("--questions", type=Path, required=True)
     parser.add_argument("-v", "--verbose", action="count")
     parser.add_argument("--model", type=str, default="gemini-2.5-flash")
+    parser.add_argument("--docs-urls", nargs="+", metavar="URL", default=None)
+    parser.add_argument("--output", choices=["text", "json"], default="text")
+    parser.add_argument("--with-docs-only", action="store_true", default=False)
     args = parser.parse_args()
     questions_path: Path = args.questions
     verbose: int = args.verbose or 0
@@ -295,11 +291,37 @@ def main():
     )
 
     questions = load_questions(questions_path=questions_path)
-    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
-    score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
+    docs_urls: list[str] | None = args.docs_urls
 
-    print(f"{score_with_no_context=}")
-    print(f"{score_with_mila_docs_urls=}")
+    result: dict = {}
+
+    if not docs_urls:
+        # No URLs provided — only run the without-docs pass.
+        result["without_docs"] = evaluate_llm(questions, with_docs=False, model=model)
+    else:
+        if not args.with_docs_only:
+            result["without_docs"] = evaluate_llm(questions, with_docs=False, model=model)
+        result["with_docs"] = evaluate_llm(questions, with_docs=True, model=model, docs_urls=docs_urls)
+
+    if args.output == "json":
+        print(
+            json.dumps(
+                {
+                    key: {
+                        "score": r.score,
+                        "correct": r.correct_answers,
+                        "total": r.num_questions,
+                        "invalid": r.invalid_answers,
+                    }
+                    for key, r in result.items()
+                }
+            )
+        )
+    else:
+        if "without_docs" in result:
+            print(f"score_with_no_context={result['without_docs']}")
+        if "with_docs" in result:
+            print(f"score_with_mila_docs_urls={result['with_docs']}")
 
 
 if __name__ == "__main__":

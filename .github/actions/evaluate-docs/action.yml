@@ -1,0 +1,56 @@
+name: Evaluate Documentation Quality
+description: >-
+  Run docmetrics against a questions file. Without docs-urls, evaluates the
+  baseline (no docs). With docs-urls, evaluates with documentation context.
+
+inputs:
+  questions-file:
+    required: true
+    description: Path to the questions YAML file (absolute or relative to workspace root).
+  docs-urls:
+    required: false
+    default: ""
+    description: >-
+      Space-separated list of documentation URLs to use as context.
+      Omit to run the baseline (without-docs) evaluation.
+  model:
+    required: false
+    default: gemini-2.5-flash
+  gemini-api-key:
+    required: true
+
+outputs:
+  score:
+    description: Score (0.0–1.0)
+    value: ${{ steps.run.outputs.score }}
+  results-json:
+    description: Full JSON output from docmetrics
+    value: ${{ steps.run.outputs.results_json }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v5
+
+    - name: Run docmetrics
+      id: run
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+      run: |
+        if [ -n "${{ inputs.docs-urls }}" ]; then
+          EXTRA_ARGS="--docs-urls ${{ inputs.docs-urls }} --with-docs-only"
+          SCORE_KEY="with_docs"
+        else
+          EXTRA_ARGS=""
+          SCORE_KEY="without_docs"
+        fi
+
+        RESULTS=$(uv run --directory ${{ github.action_path }}/../../.. docmetrics \
+          --questions "${{ inputs.questions-file }}" \
+          --model "${{ inputs.model }}" \
+          --output json \
+          $EXTRA_ARGS)
+
+        echo "results_json=$RESULTS" >> "$GITHUB_OUTPUT"
+        echo "score=$(echo "$RESULTS" | python3 -c "import sys,json; print(json.load(sys.stdin)['$SCORE_KEY']['score'])")" >> "$GITHUB_OUTPUT"

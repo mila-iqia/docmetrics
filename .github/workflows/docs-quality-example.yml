@@ -1,0 +1,61 @@
+name: Documentation Quality
+
+on:
+  pull_request:
+
+jobs:
+  docs-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Baseline: score without any documentation context.
+      # Cached by questions file hash — only recomputed when questions change.
+      - name: Restore baseline cache
+        id: baseline-cache
+        uses: actions/cache@v4
+        with:
+          path: .docmetrics/baseline.json
+          key: docmetrics-baseline-${{ hashFiles('.docmetrics/questions.yaml') }}
+
+      - name: Evaluate baseline (no docs)
+        if: steps.baseline-cache.outputs.cache-hit != 'true'
+        id: baseline-run
+        uses: mila-iqia/docmetrics/.github/actions/evaluate-docs@main
+        with:
+          questions-file: ${{ github.workspace }}/.docmetrics/questions.yaml
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Save baseline result
+        if: steps.baseline-cache.outputs.cache-hit != 'true'
+        run: echo '${{ steps.baseline-run.outputs.results-json }}' > .docmetrics/baseline.json
+
+      - name: Read baseline score
+        id: baseline
+        run: |
+          echo "score=$(python3 -c 'import json; print(json.load(open(".docmetrics/baseline.json"))["without_docs"]["score"])')" >> "$GITHUB_OUTPUT"
+
+      # Score using the live base-branch docs (https://docs.mila.quebec)
+      - name: Evaluate base docs
+        id: base
+        uses: mila-iqia/docmetrics/.github/actions/evaluate-docs@main
+        with:
+          questions-file: ${{ github.workspace }}/.docmetrics/questions.yaml
+          docs-urls: https://docs.mila.quebec
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+
+      # Score using the ReadTheDocs PR preview
+      - name: Evaluate PR docs
+        id: pr
+        uses: mila-iqia/docmetrics/.github/actions/evaluate-docs@main
+        with:
+          questions-file: ${{ github.workspace }}/.docmetrics/questions.yaml
+          docs-urls: >-
+            https://mila-docs--${{ github.event.pull_request.number }}.org.readthedocs.build/en/${{ github.event.pull_request.number }}/
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Report scores
+        run: |
+          echo "Baseline (no docs) : ${{ steps.baseline.outputs.score }}"
+          echo "Base branch docs   : ${{ steps.base.outputs.score }}"
+          echo "PR docs            : ${{ steps.pr.outputs.score }}"
