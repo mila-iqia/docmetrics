@@ -47,7 +47,7 @@ runs:
       env:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
-        docmetrics \
+        python -m docmetrics \
           --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
           --output-format json \
@@ -90,7 +90,7 @@ runs:
       env:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
-        docmetrics \
+        python -m docmetrics \
           --questions /tmp/base-questions.yaml \
           --model "${{ inputs.model }}" \
           --output-format json \
