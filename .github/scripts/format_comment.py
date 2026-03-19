@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Formats docmetrics results as a GitHub PR comment body (Markdown)."""
+
 import argparse
 import json
 from pathlib import Path
