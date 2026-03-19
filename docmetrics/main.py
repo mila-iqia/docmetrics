@@ -70,6 +70,8 @@ class EvaluationResult:
     num_questions: int
     correct_answers: int
     invalid_answers: int
+    answers: tuple[bool | None, ...] = ()
+    """Per-question results: True = correct, False = incorrect, None = invalid."""
 
     @property
     def score(self) -> float:
@@ -110,6 +112,7 @@ def evaluate_llm(
     num_questions = len(questions)
     correct_answers = 0
     invalid_answers = 0
+    answers: list[bool | None] = []
 
     # TODO: Group questions based on the docs pages they require and use the batch API
     # to ask multiple questions at once with the same context.
@@ -124,6 +127,7 @@ def evaluate_llm(
             # Adding this gives the LLM the ability to consult URLs given in the prompt.
             tools=[types.Tool(url_context=types.UrlContext())] if with_docs else None,
         )
+        answers.append(result)
         if result is None:
             invalid_answers += 1
         else:
@@ -132,6 +136,7 @@ def evaluate_llm(
         num_questions=num_questions,
         correct_answers=correct_answers,
         invalid_answers=invalid_answers,
+        answers=tuple(answers),
     )
 
 
@@ -358,17 +363,20 @@ def main():
         print(
             json.dumps(
                 {
+                    "questions": [{"question": q.question} for q in questions],
                     "without_docs": {
                         "num_questions": score_with_no_context.num_questions,
                         "correct_answers": score_with_no_context.correct_answers,
                         "invalid_answers": score_with_no_context.invalid_answers,
                         "score": score_with_no_context.score,
+                        "answers": list(score_with_no_context.answers),
                     },
                     "with_docs": {
                         "num_questions": score_with_docs.num_questions,
                         "correct_answers": score_with_docs.correct_answers,
                         "invalid_answers": score_with_docs.invalid_answers,
                         "score": score_with_docs.score,
+                        "answers": list(score_with_docs.answers),
                     },
                 }
             )
