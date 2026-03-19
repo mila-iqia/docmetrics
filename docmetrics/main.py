@@ -285,26 +285,48 @@ def make_prompt(question: Question, with_docs: bool) -> str:
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(formatter_class=argparse.MetavarTypeHelpFormatter)
-    parser.add_argument("--questions", type=Path, required=True)
-    parser.add_argument("-v", "--verbose", action="count")
-    parser.add_argument(
+def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = True) -> None:
+    p.add_argument("--questions", type=Path, required=questions_required)
+    p.add_argument(
         "--model",
         type=str,
         default="gemini-2.5-flash",
         help='LLM model to use (e.g. "gemini-2.5-flash"). Use "test:dummy" for random answers without any API calls.',
     )
-    parser.add_argument(
+    p.add_argument(
         "--output-format",
         choices=["text", "json"],
         default="text",
         help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
     )
+
+
+def main():
+    parser = argparse.ArgumentParser(formatter_class=argparse.MetavarTypeHelpFormatter)
+    parser.add_argument("-v", "--verbose", action="count")
+    # Evaluate args on the top-level parser so `docmetrics` (no subcommand) works.
+    _add_evaluate_args(parser, questions_required=False)
+
+    subparsers = parser.add_subparsers(dest="subcommand")
+
+    evaluate_parser = subparsers.add_parser(
+        "evaluate",
+        formatter_class=argparse.MetavarTypeHelpFormatter,
+        help="Evaluate an LLM on documentation questions (default when no subcommand is given).",
+    )
+    evaluate_parser.add_argument("-v", "--verbose", action="count")
+    _add_evaluate_args(evaluate_parser)
+
+    quiz_parser = subparsers.add_parser(
+        "quiz",
+        formatter_class=argparse.MetavarTypeHelpFormatter,
+        help="Take the quiz interactively in the terminal.",
+    )
+    quiz_parser.add_argument("-v", "--verbose", action="count")
+    quiz_parser.add_argument("--questions", type=Path, required=True)
+
     args = parser.parse_args()
-    questions_path: Path = args.questions
     verbose: int = args.verbose or 0
-    model: str = args.model
 
     logging.basicConfig(
         level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
@@ -315,7 +337,19 @@ def main():
         logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
     )
 
-    questions = load_questions(questions_path=questions_path)
+    if args.subcommand == "quiz":
+        from docmetrics.quiz import run_quiz
+
+        questions = load_questions(questions_path=args.questions)
+        run_quiz(questions)
+        return
+
+    # Default: evaluate (subcommand is None or "evaluate")
+    if args.questions is None:
+        parser.error("the following arguments are required: --questions")
+
+    questions = load_questions(questions_path=args.questions)
+    model: str = args.model
     score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
     score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
 
