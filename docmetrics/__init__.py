@@ -3,6 +3,7 @@
 from docmetrics.main import (
     evaluate_llm,  # noqa: F401
     EvaluationResult,
+    MultiResponse,
     Question,
     Response,
     ask_question,
@@ -15,5 +16,6 @@ __all__ = [
     "load_questions",
     "Question",
     "Response",
+    "MultiResponse",
     "EvaluationResult",
 ]
