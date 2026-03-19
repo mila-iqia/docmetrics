@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import re
+import statistics
 import warnings
 from pathlib import Path
 from typing import Callable, Literal
@@ -66,6 +67,11 @@ class Response(pydantic.BaseModel):
     """A brief justification for the selected answer."""
 
 
+class MultiResponse(pydantic.BaseModel):
+    answers: list[Response]
+    """Answers to each question in the prompt, in the same order."""
+
+
 @functools.cache
 def get_google_genai_client():
     load_dotenv()  # reads variables from a .env file and sets them in os.environ
@@ -78,70 +84,329 @@ class EvaluationResult:
     num_questions: int
     correct_answers: int
     invalid_answers: int
+    per_question_scores: tuple[float, ...] = ()
+    """Per-question correctness fraction averaged over candidates (0.0–1.0 per question)."""
+    num_candidates: int = 1
+    """Number of response candidates generated per question group."""
 
     @property
     def score(self) -> float:
-        """The percentage of questions that the LLM answered correctly."""
+        """The mean fraction of questions the LLM answered correctly (averaged over candidates)."""
+        if self.per_question_scores:
+            return statistics.mean(self.per_question_scores)
         return self.correct_answers / self.num_questions if self.num_questions > 0 else 0.0
+
+    @property
+    def score_std(self) -> float:
+        """Standard deviation of per-question correctness scores across questions and candidates."""
+        if len(self.per_question_scores) > 1:
+            return statistics.stdev(self.per_question_scores)
+        return 0.0
 
 
 def evaluate_llm(
     questions: list[Question],
     with_docs: bool,
     model: str,
+    num_candidates: int = 1,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
+
+    Questions are grouped by their ``docs_urls`` so that questions sharing the same
+    documentation context are asked together in a single API call, reducing the total
+    number of requests.  When *num_candidates* > 1 the API is asked to return multiple
+    independent answers per group, enabling mean/std statistics.
 
     Parameters
     ----------
     questions: The list of questions to ask the LLM.
     with_docs: Whether to provide documentation URLs as context to the LLM.
     model: The name of the LLM model to use.
+    num_candidates: Number of independent response candidates to request per API call.
+        Values > 1 enable mean/std statistics but are not compatible with structured
+        output; the fallback text parser is used instead.
 
     Returns
     -------
-    The evaluation results.
+    The evaluation results, including per-question scores and standard deviation.
 
 
     Notes
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
     client = None if model == DUMMY_MODEL else get_google_genai_client()
-    # for model_config in client.models.list().page:
-    #     if model_config.supported_actions and "generateContent" in model_config.supported_actions:
-    #         logger.info(f"Available model: {model_config.name}")
-    #         logger.debug(f"Model config: {model_config}")
-    # exit()
     num_questions = len(questions)
-    correct_answers = 0
+
+    if num_questions == 0:
+        return EvaluationResult(
+            num_questions=0,
+            correct_answers=0,
+            invalid_answers=0,
+            per_question_scores=(),
+            num_candidates=num_candidates,
+        )
+
+    # per_question_scores[i] = fraction of candidates that correctly answered question i
+    per_question_scores = [0.0] * num_questions
     invalid_answers = 0
 
-    # TODO: Group questions based on the docs pages they require and use the batch API
-    # to ask multiple questions at once with the same context.
-
-    for question in questions:
-        result = ask_question(
-            client=client,
-            question=question,
-            with_docs=with_docs,
-            model=model,
-            # Adding this gives the LLM the ability to consult URLs given in the prompt.
-            tools=[types.Tool(url_context=types.UrlContext())] if with_docs else None,
+    if model == DUMMY_MODEL:
+        for i, question in enumerate(questions):
+            candidate_scores = [
+                float(random.choice(list(question.options.keys())) == question.answer)
+                for _ in range(num_candidates)
+            ]
+            per_question_scores[i] = statistics.mean(candidate_scores)
+        correct_answers = sum(1 for s in per_question_scores if s >= 0.5)
+        return EvaluationResult(
+            num_questions=num_questions,
+            correct_answers=correct_answers,
+            invalid_answers=0,
+            per_question_scores=tuple(per_question_scores),
+            num_candidates=num_candidates,
         )
-        if result is None:
-            invalid_answers += 1
-        else:
-            correct_answers += int(result)
+
+    assert client is not None
+    tools = [types.Tool(url_context=types.UrlContext())] if with_docs else None
+
+    # Group questions by their docs URLs to reduce the number of API calls.
+    # Questions sharing the same docs context are asked together in one request.
+    for docs_key, indexed_questions in _group_questions_by_docs(questions):
+        qs = [q for _, q in indexed_questions]
+        logger.info(
+            f"Asking {len(qs)} question(s) in one API call "
+            f"(docs context: {list(docs_key) or 'none'}, candidates: {num_candidates})."
+        )
+
+        # One API call for all questions in this group, with num_candidates candidates
+        candidate_responses = get_agent_answers_for_group(
+            client=client,
+            model=model,
+            tools=tools,
+            questions=qs,
+            with_docs=with_docs,
+            num_candidates=num_candidates,
+        )
+        # candidate_responses shape: [num_actual_candidates][len(qs)] -> Response | None
+
+        for q_pos, (orig_idx, question) in enumerate(indexed_questions):
+            scores_for_q: list[float] = []
+            all_invalid = True
+
+            for cand_responses in candidate_responses:
+                resp = cand_responses[q_pos] if q_pos < len(cand_responses) else None
+                if resp is not None:
+                    all_invalid = False
+                    scores_for_q.append(float(resp.answer == question.answer))
+                    logger.info(
+                        f"Question {orig_idx + 1}: correct={question.answer}, LLM={resp.answer}"
+                    )
+                    if resp.justification:
+                        logger.debug(f"Justification: {resp.justification}")
+
+            if all_invalid:
+                logger.error(
+                    f"Question {orig_idx + 1}: all candidate answers couldn't be parsed!"
+                )
+                invalid_answers += 1
+                per_question_scores[orig_idx] = 0.0
+            else:
+                per_question_scores[orig_idx] = statistics.mean(scores_for_q)
+
+    # A question is counted as "correct" when at least half the candidates answered it correctly.
+    correct_answers = sum(1 for s in per_question_scores if s >= 0.5)
+
     return EvaluationResult(
         num_questions=num_questions,
         correct_answers=correct_answers,
         invalid_answers=invalid_answers,
+        per_question_scores=tuple(per_question_scores),
+        num_candidates=num_candidates,
     )
 
 
 def load_questions(questions_path: Path) -> list[Question]:
     return [Question(**q) for q in yaml.safe_load(questions_path.read_text())]
+
+
+def _group_questions_by_docs(
+    questions: list[Question],
+) -> list[tuple[tuple[str, ...], list[tuple[int, Question]]]]:
+    """Group questions by their ``docs_urls`` to minimise the number of API calls.
+
+    Questions with the same documentation context can be asked together in a single
+    request.  The original question indices are preserved so that results can be
+    mapped back to the right positions in the output.
+
+    Returns a list of ``(docs_key, [(original_index, question), ...])`` pairs,
+    maintaining insertion order.
+    """
+    groups: dict[tuple[str, ...], list[tuple[int, Question]]] = {}
+    for idx, question in enumerate(questions):
+        key = tuple(question.docs_urls or [])
+        if key not in groups:
+            groups[key] = []
+        groups[key].append((idx, question))
+    return list(groups.items())
+
+
+def make_multi_prompt(questions: list[Question], with_docs: bool) -> str:
+    """Build a prompt for answering one or more questions at once.
+
+    For a single question the output is identical to ``make_prompt``.  For multiple
+    questions each question is numbered and the LLM is asked to answer all of them.
+    The shared documentation URLs (if any) appear once at the top of the prompt.
+    """
+    if len(questions) == 1:
+        return make_prompt(questions[0], with_docs=with_docs)
+
+    parts: list[str] = []
+
+    if with_docs:
+        # Collect all unique URLs from the group (they share the same key, but union
+        # is safer in case the list was constructed from heterogeneous sources).
+        seen: list[str] = []
+        for q in questions:
+            for url in q.docs_urls or []:
+                if url not in seen:
+                    seen.append(url)
+        if seen:
+            parts.append("Based on this documentation: " + ", ".join(seen) + ",")
+
+    parts.append(
+        f"Answer ALL {len(questions)} of the following multiple-choice questions. "
+        "Provide your answers in order."
+    )
+
+    for i, q in enumerate(questions, 1):
+        parts.append(f"\nQuestion {i}: {q.question}")
+        for letter, answer in q.options.items():
+            parts.append(f"- {letter}: {answer}")
+
+    return "\n".join(parts) + "\n"
+
+
+def get_agent_answers_for_group(
+    client: genai.Client,
+    model: str,
+    tools: list[types.Tool | Callable] | None,
+    questions: list[Question],
+    with_docs: bool,
+    num_candidates: int = 1,
+) -> list[list[Response | None]]:
+    """Ask a group of questions in a single API call, optionally with multiple candidates.
+
+    Batching questions that share the same documentation context reduces the total
+    number of API calls.  Requesting *num_candidates* > 1 returns independent answers
+    from the same call and enables mean/std statistics.
+
+    Note: structured output (``response_json_schema``) is only used when
+    *num_candidates* == 1, because the Gemini API does not support both at the same
+    time.  For *num_candidates* > 1 the text output is parsed with the normal JSON
+    fallback logic.
+
+    Returns
+    -------
+    A list of shape ``[num_actual_candidates][num_questions]`` → ``Response | None``.
+    """
+    is_single = len(questions) == 1
+    prompt = make_multi_prompt(questions, with_docs=with_docs)
+    logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
+
+    response_schema = (
+        Response.model_json_schema() if is_single else MultiResponse.model_json_schema()
+    )
+
+    # Structured output is only reliable for gemini-2.5-flash without tools, and is
+    # incompatible with candidate_count > 1.
+    use_structured = not tools and model == "gemini-2.5-flash"
+    use_schema_in_request = use_structured and num_candidates == 1
+
+    api_response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            candidate_count=num_candidates if num_candidates > 1 else None,
+            response_mime_type="application/json" if use_schema_in_request else None,
+            response_json_schema=response_schema if use_schema_in_request else None,
+            tools=tools,
+        ),
+    )
+    assert api_response.candidates
+
+    results: list[list[Response | None]] = []
+
+    for candidate_idx, candidate in enumerate(api_response.candidates):
+        # Log URL consultation metadata
+        if (consulted_urls := candidate.url_context_metadata) and consulted_urls.url_metadata:
+            logger.info(
+                f"The LLM consulted {len(consulted_urls.url_metadata)} web pages to answer "
+                f"the question(s) (candidate {candidate_idx})."
+            )
+            logger.debug(
+                "Consulted URLs: "
+                + "\n".join(
+                    "- "
+                    + (url_meta.retrieved_url or "n/a")
+                    + " "
+                    + (
+                        "(success)"
+                        if url_meta.url_retrieval_status
+                        == types.UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS
+                        else "(failure)"
+                    )
+                    for url_meta in consulted_urls.url_metadata
+                )
+            )
+
+        # Extract candidate text from content parts
+        candidate_text: str | None = None
+        if candidate.content and candidate.content.parts:
+            texts = [p.text for p in candidate.content.parts if p.text]
+            if texts:
+                candidate_text = "".join(texts)
+
+        if is_single:
+            # --- single-question response ---
+            parsed: Response | None = None
+            # For the first candidate with structured output, try api_response.parsed first
+            if candidate_idx == 0 and use_schema_in_request and isinstance(
+                api_response.parsed, Response
+            ):
+                logger.debug("LLM output was correctly parsed by the client library.")
+                parsed = api_response.parsed
+            elif candidate_text:
+                try:
+                    parsed = Response.model_validate_json(candidate_text)
+                except pydantic.ValidationError:
+                    parsed = parse_response_fallback(candidate_text)
+            if parsed is None:
+                logger.error(f"LLM answer for candidate {candidate_idx} couldn't be parsed!")
+            results.append([parsed])
+
+        else:
+            # --- multi-question response ---
+            parsed_responses: list[Response | None] = [None] * len(questions)
+            if candidate_text:
+                try:
+                    multi = MultiResponse.model_validate_json(candidate_text)
+                    n = min(len(multi.answers), len(questions))
+                    if len(multi.answers) != len(questions):
+                        logger.warning(
+                            f"Expected {len(questions)} answers from LLM, "
+                            f"got {len(multi.answers)} (candidate {candidate_idx})."
+                        )
+                    for i in range(n):
+                        parsed_responses[i] = multi.answers[i]
+                except pydantic.ValidationError:
+                    logger.error(
+                        f"Failed to parse multi-question response for candidate "
+                        f"{candidate_idx}: {candidate_text[:200]}"
+                    )
+            results.append(parsed_responses)
+
+    return results
 
 
 def ask_question(
@@ -299,6 +564,17 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         default="text",
         help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
     )
+    p.add_argument(
+        "--num-candidates",
+        type=int,
+        default=1,
+        help=(
+            "Number of independent response candidates to generate per question group. "
+            "Values > 1 enable mean/std statistics across candidates. "
+            "Note: candidate_count > 1 is not compatible with structured output; "
+            "the fallback text parser is used instead."
+        ),
+    )
 
 
 def main():
@@ -350,8 +626,13 @@ def main():
 
     questions = load_questions(questions_path=args.questions)
     model: str = args.model
-    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
-    score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
+    num_candidates: int = args.num_candidates
+    score_with_no_context = evaluate_llm(
+        questions, with_docs=False, model=model, num_candidates=num_candidates
+    )
+    score_with_mila_docs_urls = evaluate_llm(
+        questions, with_docs=True, model=model, num_candidates=num_candidates
+    )
 
     if args.output_format == "json":
         print(
@@ -362,12 +643,16 @@ def main():
                         "correct_answers": score_with_no_context.correct_answers,
                         "invalid_answers": score_with_no_context.invalid_answers,
                         "score": score_with_no_context.score,
+                        "score_std": score_with_no_context.score_std,
+                        "num_candidates": score_with_no_context.num_candidates,
                     },
                     "with_docs": {
                         "num_questions": score_with_mila_docs_urls.num_questions,
                         "correct_answers": score_with_mila_docs_urls.correct_answers,
                         "invalid_answers": score_with_mila_docs_urls.invalid_answers,
                         "score": score_with_mila_docs_urls.score,
+                        "score_std": score_with_mila_docs_urls.score_std,
+                        "num_candidates": score_with_mila_docs_urls.num_candidates,
                     },
                 }
             )

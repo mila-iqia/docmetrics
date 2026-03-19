@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 
 
-def fmt_score(score: float, correct: int, total: int) -> str:
-    return f"{score:.0%} ({correct}/{total})"
+def fmt_score(score: float, correct: int, total: int, std: float = 0.0) -> str:
+    base = f"{score:.0%} ({correct}/{total})"
+    if std > 0:
+        return f"{base} ±{std:.0%}"
+    return base
 
 
 def fmt_delta(current: float, base: float) -> str:
@@ -52,8 +55,8 @@ def main() -> None:
 
     lines.append(
         f"| **This PR** "
-        f"| {fmt_score(cur_no['score'], cur_no['correct_answers'], cur_no['num_questions'])} "
-        f"| {fmt_score(cur_wi['score'], cur_wi['correct_answers'], cur_wi['num_questions'])} "
+        f"| {fmt_score(cur_no['score'], cur_no['correct_answers'], cur_no['num_questions'], cur_no.get('score_std', 0.0))} "
+        f"| {fmt_score(cur_wi['score'], cur_wi['correct_answers'], cur_wi['num_questions'], cur_wi.get('score_std', 0.0))} "
         f"| {fmt_delta(cur_wi['score'], cur_no['score'])} |"
     )
 
@@ -69,8 +72,8 @@ def main() -> None:
 
         lines.append(
             f"| **Base ({label})** "
-            f"| {fmt_score(base_no['score'], base_no['correct_answers'], base_no['num_questions'])} "
-            f"| {fmt_score(base_wi['score'], base_wi['correct_answers'], base_wi['num_questions'])} "
+            f"| {fmt_score(base_no['score'], base_no['correct_answers'], base_no['num_questions'], base_no.get('score_std', 0.0))} "
+            f"| {fmt_score(base_wi['score'], base_wi['correct_answers'], base_wi['num_questions'], base_wi.get('score_std', 0.0))} "
             f"| {fmt_delta(base_wi['score'], base_no['score'])} |"
         )
         lines.append(

@@ -2,6 +2,7 @@ import random
 import typing
 from unittest.mock import MagicMock, patch
 
+import pytest
 from google import genai
 from google.genai import types
 
@@ -9,11 +10,15 @@ from docmetrics.main import (
     DUMMY_MODEL,
     EvaluationResult,
     Letter,
+    MultiResponse,
     Question,
     Response,
     ask_question,
     evaluate_llm,
     get_agent_answer,
+    get_agent_answers_for_group,
+    make_multi_prompt,
+    _group_questions_by_docs,
 )
 
 # ---------------------------------------------------------------------------
@@ -76,6 +81,38 @@ def mock_client(answer: Letter, **kwargs) -> MagicMock:
     """Return a mock genai.Client whose generate_content returns a fake response."""
     client = MagicMock()
     client.models.generate_content.return_value = make_fake_response(answer, **kwargs)
+    return client
+
+
+def make_fake_multi_response(
+    answers: list[Letter],
+    *,
+    justification: str = "Fake justification.",
+    use_parsed: bool = True,
+) -> MagicMock:
+    """Build a fake GenerateContentResponse-like object for multiple questions."""
+    response_objs = [Response(answer=a, justification=justification) for a in answers]
+    multi_response = MultiResponse(answers=response_objs)
+    response_json = multi_response.model_dump_json()
+
+    candidate = types.Candidate(
+        index=0,
+        content=types.Content(role="model", parts=[types.Part(text=response_json)]),
+        grounding_metadata=None,
+        url_context_metadata=None,
+    )
+
+    response = MagicMock()
+    response.candidates = [candidate]
+    response.text = response_json
+    response.parsed = multi_response if use_parsed else None
+    return response
+
+
+def mock_client_multi(answers: list[Letter], **kwargs) -> MagicMock:
+    """Return a mock genai.Client whose generate_content returns a multi-question response."""
+    client = MagicMock()
+    client.models.generate_content.return_value = make_fake_multi_response(answers, **kwargs)
     return client
 
 
@@ -184,7 +221,8 @@ def test_evaluate_llm_score():
     with patch("docmetrics.main.get_google_genai_client") as mock_factory:
         client = MagicMock()
         mock_factory.return_value = client
-        client.models.generate_content.side_effect = [make_fake_response(a) for a in answers]
+        # All QUESTIONS have docs_urls=None → grouped into a single API call.
+        client.models.generate_content.return_value = make_fake_multi_response(answers)
 
         result = evaluate_llm(QUESTIONS, with_docs=False, model="fake-model")
         mock_factory.assert_called()
@@ -193,25 +231,31 @@ def test_evaluate_llm_score():
     assert result.num_questions == len(QUESTIONS)
     assert result.correct_answers == expected_correct
     assert result.invalid_answers == 0
+    assert len(result.per_question_scores) == len(QUESTIONS)
+    # One API call for the whole group
+    assert client.models.generate_content.call_count == 1
 
 
 def test_evaluate_llm_with_docs_adds_url_tool():
-    """When with_docs=True, each generate_content call includes a UrlContext tool."""
+    """When with_docs=True, the generate_content call includes a UrlContext tool."""
     with patch("docmetrics.main.get_google_genai_client") as mock_factory:
         client = typing.cast(genai.Client, MagicMock())
         mock_factory.return_value = client
-        client.models.generate_content.side_effect = [  # type: ignore
-            make_fake_response(q.answer) for q in QUESTIONS
-        ]
+        # All QUESTIONS have docs_urls=None → one grouped API call.
+        client.models.generate_content.return_value = make_fake_multi_response(  # type: ignore
+            [q.answer for q in QUESTIONS]
+        )
 
         evaluate_llm(QUESTIONS, with_docs=True, model="fake-model")
 
-    for call in client.models.generate_content.call_args_list:  # type: ignore
-        config: types.GenerateContentConfig = call.kwargs["config"]
-        assert config.tools is not None
-        assert any(
-            isinstance(t, types.Tool) and t.url_context is not None for t in config.tools
-        ), "Expected a UrlContext tool in the generate_content call"
+    # Should have been called exactly once (all questions grouped together)
+    assert client.models.generate_content.call_count == 1  # type: ignore
+    call = client.models.generate_content.call_args_list[0]  # type: ignore
+    config: types.GenerateContentConfig = call.kwargs["config"]
+    assert config.tools is not None
+    assert any(
+        isinstance(t, types.Tool) and t.url_context is not None for t in config.tools
+    ), "Expected a UrlContext tool in the generate_content call"
 
 
 def test_evaluate_llm_dummy_model():
@@ -234,15 +278,322 @@ def test_evaluate_llm_without_docs_no_url_tool():
     with patch("docmetrics.main.get_google_genai_client") as mock_factory:
         client = typing.cast(genai.Client, MagicMock())
         mock_factory.return_value = client
-        client.models.generate_content.side_effect = [  # type: ignore
-            make_fake_response(q.answer) for q in QUESTIONS
-        ]
+        client.models.generate_content.return_value = make_fake_multi_response(  # type: ignore
+            [q.answer for q in QUESTIONS]
+        )
 
         evaluate_llm(QUESTIONS, with_docs=False, model="fake-model")
 
-    for call in client.models.generate_content.call_args_list:  # type: ignore
-        config: types.GenerateContentConfig = call.kwargs["config"]
-        tools = config.tools or []
-        assert not any(isinstance(t, types.Tool) and t.url_context is not None for t in tools), (
-            "Did not expect a UrlContext tool when with_docs=False"
+    call = client.models.generate_content.call_args_list[0]  # type: ignore
+    config: types.GenerateContentConfig = call.kwargs["config"]
+    tools = config.tools or []
+    assert not any(isinstance(t, types.Tool) and t.url_context is not None for t in tools), (
+        "Did not expect a UrlContext tool when with_docs=False"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _group_questions_by_docs tests
+# ---------------------------------------------------------------------------
+
+
+def test_group_questions_by_docs_all_same():
+    """Questions with identical docs_urls are merged into a single group."""
+    url = "https://docs.example.com"
+    qs = [
+        Question(question="Q1?", options={"A": "a", "B": "b"}, answer="A", docs_urls=[url]),
+        Question(question="Q2?", options={"A": "a", "B": "b"}, answer="B", docs_urls=[url]),
+    ]
+    groups = _group_questions_by_docs(qs)
+    assert len(groups) == 1
+    key, members = groups[0]
+    assert key == (url,)
+    assert len(members) == 2
+
+
+def test_group_questions_by_docs_different_urls():
+    """Questions with different docs_urls end up in separate groups."""
+    qs = [
+        Question(
+            question="Q1?", options={"A": "a"}, answer="A", docs_urls=["https://url1.com"]
+        ),
+        Question(
+            question="Q2?", options={"A": "a"}, answer="A", docs_urls=["https://url2.com"]
+        ),
+    ]
+    groups = _group_questions_by_docs(qs)
+    assert len(groups) == 2
+
+
+def test_group_questions_by_docs_none_urls():
+    """Questions with docs_urls=None are grouped under an empty key."""
+    qs = [
+        Question(question="Q1?", options={"A": "a"}, answer="A"),
+        Question(question="Q2?", options={"A": "a"}, answer="A"),
+    ]
+    groups = _group_questions_by_docs(qs)
+    assert len(groups) == 1
+    key, _ = groups[0]
+    assert key == ()
+
+
+def test_group_questions_preserves_original_indices():
+    """Original question indices are stored correctly."""
+    qs = [
+        Question(question="Q1?", options={"A": "a"}, answer="A"),
+        Question(question="Q2?", options={"A": "a"}, answer="A"),
+        Question(question="Q3?", options={"A": "a"}, answer="A"),
+    ]
+    groups = _group_questions_by_docs(qs)
+    _, members = groups[0]
+    indices = [idx for idx, _ in members]
+    assert indices == [0, 1, 2]
+
+
+# ---------------------------------------------------------------------------
+# make_multi_prompt tests
+# ---------------------------------------------------------------------------
+
+
+def test_make_multi_prompt_single_question():
+    """For a single question, make_multi_prompt delegates to make_prompt."""
+    from docmetrics.main import make_prompt
+
+    q = QUESTIONS[0]
+    assert make_multi_prompt([q], with_docs=False) == make_prompt(q, with_docs=False)
+
+
+def test_make_multi_prompt_multiple_questions():
+    """For multiple questions, each question is numbered in the prompt."""
+    result = make_multi_prompt(QUESTIONS[:2], with_docs=False)
+    assert "Question 1:" in result
+    assert "Question 2:" in result
+    assert QUESTIONS[0].question in result
+    assert QUESTIONS[1].question in result
+
+
+def test_make_multi_prompt_with_docs():
+    """Documentation URLs appear once at the top for multi-question prompts."""
+    url = "https://docs.example.com"
+    qs = [
+        Question(question="Q1?", options={"A": "a"}, answer="A", docs_urls=[url]),
+        Question(question="Q2?", options={"A": "a"}, answer="A", docs_urls=[url]),
+    ]
+    result = make_multi_prompt(qs, with_docs=True)
+    assert url in result
+    # URL should only appear once even though two questions share it
+    assert result.count(url) == 1
+
+
+# ---------------------------------------------------------------------------
+# get_agent_answers_for_group tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_agent_answers_for_group_single_question():
+    """Single-question group returns one response per candidate (default: 1)."""
+    q = QUESTIONS[0]
+    result = get_agent_answers_for_group(
+        mock_client("A"), "fake-model", tools=None, questions=[q], with_docs=False
+    )
+    assert len(result) == 1  # one candidate
+    assert len(result[0]) == 1  # one question
+    assert isinstance(result[0][0], Response)
+    assert result[0][0].answer == "A"
+
+
+def test_get_agent_answers_for_group_multi_question():
+    """Multi-question group returns one MultiResponse parsed into separate Responses."""
+    answers: list[Letter] = ["A", "B", "C"]
+    result = get_agent_answers_for_group(
+        mock_client_multi(answers),
+        "fake-model",
+        tools=None,
+        questions=QUESTIONS,
+        with_docs=False,
+    )
+    assert len(result) == 1  # one candidate
+    assert len(result[0]) == 3  # three questions
+    for i, letter in enumerate(answers):
+        assert result[0][i] is not None
+        assert result[0][i].answer == letter  # type: ignore[union-attr]
+
+
+def test_get_agent_answers_for_group_multiple_candidates():
+    """When multiple candidates are returned, all are parsed."""
+    # Build a response with two candidates
+    answers_c1: list[Letter] = ["A", "B", "C"]
+    answers_c2: list[Letter] = ["B", "B", "C"]
+
+    resp_c1 = MultiResponse(
+        answers=[Response(answer=a, justification="j") for a in answers_c1]
+    )
+    resp_c2 = MultiResponse(
+        answers=[Response(answer=a, justification="j") for a in answers_c2]
+    )
+
+    def make_candidate(resp: MultiResponse, idx: int) -> types.Candidate:
+        return types.Candidate(
+            index=idx,
+            content=types.Content(
+                role="model", parts=[types.Part(text=resp.model_dump_json())]
+            ),
+            grounding_metadata=None,
+            url_context_metadata=None,
         )
+
+    api_response = MagicMock()
+    api_response.candidates = [make_candidate(resp_c1, 0), make_candidate(resp_c2, 1)]
+    api_response.parsed = None
+    api_response.text = resp_c1.model_dump_json()
+
+    client = MagicMock()
+    client.models.generate_content.return_value = api_response
+
+    result = get_agent_answers_for_group(
+        client,
+        "fake-model",
+        tools=None,
+        questions=QUESTIONS,
+        with_docs=False,
+        num_candidates=2,
+    )
+    assert len(result) == 2  # two candidates
+    for cand in result:
+        assert len(cand) == 3  # three questions per candidate
+    # Candidate 1 answers
+    assert result[0][0].answer == "A"  # type: ignore[union-attr]
+    assert result[0][1].answer == "B"  # type: ignore[union-attr]
+    # Candidate 2 answers
+    assert result[1][0].answer == "B"  # type: ignore[union-attr]
+    assert result[1][1].answer == "B"  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# EvaluationResult stats tests
+# ---------------------------------------------------------------------------
+
+
+def test_evaluation_result_score_with_per_question_scores():
+    """score property uses mean of per_question_scores when available."""
+    result = EvaluationResult(
+        num_questions=3,
+        correct_answers=2,
+        invalid_answers=0,
+        per_question_scores=(1.0, 1.0, 0.0),
+        num_candidates=1,
+    )
+    assert result.score == pytest.approx(2 / 3, rel=1e-6)
+
+
+def test_evaluation_result_score_std():
+    """score_std returns stdev of per_question_scores."""
+    import statistics as _stats
+
+    scores = (1.0, 0.0, 1.0)
+    result = EvaluationResult(
+        num_questions=3,
+        correct_answers=2,
+        invalid_answers=0,
+        per_question_scores=scores,
+        num_candidates=1,
+    )
+    assert result.score_std == pytest.approx(_stats.stdev(scores), rel=1e-6)
+
+
+def test_evaluation_result_score_std_single():
+    """score_std is 0 when only one question."""
+    result = EvaluationResult(
+        num_questions=1,
+        correct_answers=1,
+        invalid_answers=0,
+        per_question_scores=(1.0,),
+        num_candidates=1,
+    )
+    assert result.score_std == 0.0
+
+
+def test_evaluate_llm_groups_questions_reduces_api_calls():
+    """Questions sharing the same docs_urls result in a single API call."""
+    url = "https://docs.example.com"
+    qs = [
+        Question(question="Q1?", options={"A": "a", "B": "b"}, answer="A", docs_urls=[url]),
+        Question(question="Q2?", options={"A": "a", "B": "b"}, answer="B", docs_urls=[url]),
+        Question(question="Q3?", options={"A": "a", "B": "b"}, answer="A", docs_urls=[url]),
+    ]
+    answers: list[Letter] = ["A", "B", "A"]
+
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        client.models.generate_content.return_value = make_fake_multi_response(answers)
+
+        result = evaluate_llm(qs, with_docs=False, model="fake-model")
+
+    # All 3 questions share the same docs_url → 1 API call instead of 3
+    assert client.models.generate_content.call_count == 1
+    assert result.num_questions == 3
+    assert result.correct_answers == 3
+    assert len(result.per_question_scores) == 3
+
+
+def test_evaluate_llm_different_docs_multiple_api_calls():
+    """Questions with different docs_urls require separate API calls."""
+    qs = [
+        Question(
+            question="Q1?",
+            options={"A": "a", "B": "b"},
+            answer="A",
+            docs_urls=["https://url1.com"],
+        ),
+        Question(
+            question="Q2?",
+            options={"A": "a", "B": "b"},
+            answer="B",
+            docs_urls=["https://url2.com"],
+        ),
+    ]
+
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        # Two separate single-question API calls
+        client.models.generate_content.side_effect = [
+            make_fake_response("A"),
+            make_fake_response("B"),
+        ]
+
+        result = evaluate_llm(qs, with_docs=False, model="fake-model")
+
+    # Different docs_urls → 2 API calls (one per group)
+    assert client.models.generate_content.call_count == 2
+    assert result.correct_answers == 2
+
+
+def test_evaluate_llm_num_candidates_dummy():
+    """num_candidates > 1 works with the dummy model (no API calls)."""
+    result = evaluate_llm(QUESTIONS, with_docs=False, model=DUMMY_MODEL, num_candidates=3)
+    assert result.num_questions == len(QUESTIONS)
+    assert result.num_candidates == 3
+    assert len(result.per_question_scores) == len(QUESTIONS)
+    # Each score should be between 0 and 1
+    for score in result.per_question_scores:
+        assert 0.0 <= score <= 1.0
+
+
+def test_evaluate_llm_per_question_scores_populated():
+    """evaluate_llm populates per_question_scores for the real model path."""
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        client.models.generate_content.return_value = make_fake_multi_response(
+            [q.answer for q in QUESTIONS]
+        )
+
+        result = evaluate_llm(QUESTIONS, with_docs=False, model="fake-model")
+
+    assert len(result.per_question_scores) == len(QUESTIONS)
+    # All answers are correct, so each score should be 1.0
+    assert all(s == 1.0 for s in result.per_question_scores)
+    assert result.score == pytest.approx(1.0)
+    assert result.score_std == pytest.approx(0.0)
