@@ -249,7 +249,6 @@ def test_evaluate_llm_without_docs_no_url_tool():
         )
 
 
-
 # ---------------------------------------------------------------------------
 # main() CLI tests
 # ---------------------------------------------------------------------------
@@ -274,8 +273,19 @@ def test_main_no_docs_urls_runs_baseline_only(tmp_path, capsys):
         mock_factory.return_value = client
         client.models.generate_content.side_effect = [make_fake_response("A")]
 
-        with patch("sys.argv", ["docmetrics", "evaluate", "--questions", str(questions_file), "--output", "json"]):
+        with patch(
+            "sys.argv",
+            [
+                "docmetrics",
+                "evaluate",
+                "--questions",
+                str(questions_file),
+                "--output-format",
+                "json",
+            ],
+        ):
             from docmetrics.main import main
+
             main()
 
     captured = capsys.readouterr()
@@ -297,10 +307,26 @@ def test_main_with_docs_urls_runs_both_passes(tmp_path, capsys):
     with patch("docmetrics.main.get_google_genai_client") as mock_factory:
         client = MagicMock()
         mock_factory.return_value = client
-        client.models.generate_content.side_effect = [make_fake_response("A"), make_fake_response("A")]
+        client.models.generate_content.side_effect = [
+            make_fake_response("A"),
+            make_fake_response("A"),
+        ]
 
-        with patch("sys.argv", ["docmetrics", "evaluate", "--questions", str(questions_file), "--output", "json", "--docs-urls", "https://docs.example.com"]):
+        with patch(
+            "sys.argv",
+            [
+                "docmetrics",
+                "evaluate",
+                "--questions",
+                str(questions_file),
+                "--output-format",
+                "json",
+                "--docs-urls",
+                "https://docs.example.com",
+            ],
+        ):
             from docmetrics.main import main
+
             main()
 
     captured = capsys.readouterr()
@@ -323,8 +349,22 @@ def test_main_with_docs_only(tmp_path, capsys):
         mock_factory.return_value = client
         client.models.generate_content.side_effect = [make_fake_response("A")]
 
-        with patch("sys.argv", ["docmetrics", "evaluate", "--questions", str(questions_file), "--output", "json", "--docs-urls", "https://docs.example.com", "--with-docs-only"]):
+        with patch(
+            "sys.argv",
+            [
+                "docmetrics",
+                "evaluate",
+                "--questions",
+                str(questions_file),
+                "--output-format",
+                "json",
+                "--docs-urls",
+                "https://docs.example.com",
+                "--with-docs-only",
+            ],
+        ):
             from docmetrics.main import main
+
             main()
 
     captured = capsys.readouterr()
@@ -356,9 +396,18 @@ def test_main_docs_urls_appear_in_prompt(tmp_path, capsys):
 
         with patch(
             "sys.argv",
-            ["docmetrics", "evaluate", "--questions", str(questions_file), "--with-docs-only", "--docs-urls", "https://docs.example.com/page1"],
+            [
+                "docmetrics",
+                "evaluate",
+                "--questions",
+                str(questions_file),
+                "--with-docs-only",
+                "--docs-urls",
+                "https://docs.example.com/page1",
+            ],
         ):
             from docmetrics.main import main
+
             main()
 
     assert any("https://docs.example.com/page1" in p for p in captured_prompts)

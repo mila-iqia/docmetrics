@@ -375,13 +375,20 @@ def main():
     )
 
     questions = load_questions(questions_path=questions_path)
+
     if args.command == "quiz":
         run_quiz(questions)
         return
 
+    docs_urls: list[str] = args.docs_urls or []
     with_docs_only: bool = args.with_docs_only
     output_format: Literal["text", "json"] = args.output_format
     model: str = args.model
+
+    questions = [
+        dataclasses.replace(question, docs_urls=(question.docs_urls or []) + docs_urls)
+        for question in questions
+    ]
 
     score_with_no_context = None
     if not with_docs_only:
