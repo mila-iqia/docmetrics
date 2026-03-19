@@ -2,6 +2,7 @@ import argparse
 import dataclasses
 import functools
 import logging
+import random
 import re
 import warnings
 from pathlib import Path
@@ -18,6 +19,9 @@ from pydantic.dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 Letter = Literal["A", "B", "C", "D", "E"]
+
+DUMMY_MODEL = "test:dummy"
+"""A model name that returns a random answer without calling any external API."""
 __all__ = [
     "evaluate_llm",
     "ask_question",
@@ -102,7 +106,7 @@ def evaluate_llm(
     Notes
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
-    client = get_google_genai_client()
+    client = None if model == DUMMY_MODEL else get_google_genai_client()
     # for model_config in client.models.list().page:
     #     if model_config.supported_actions and "generateContent" in model_config.supported_actions:
     #         logger.info(f"Available model: {model_config.name}")
@@ -140,7 +144,7 @@ def load_questions(questions_path: Path) -> list[Question]:
 
 
 def ask_question(
-    client: genai.Client,
+    client: genai.Client | None,
     question: Question,
     with_docs: bool,
     model: str,
@@ -150,6 +154,10 @@ def ask_question(
 
     Returns None if the LLM's answer was invalid.
     """
+    if model == DUMMY_MODEL:
+        dummy_answer = random.choice(list(question.options.keys()))
+        logger.info(f"Correct answer: {question.answer}, dummy answer: {dummy_answer}")
+        return dummy_answer == question.answer
 
     # TODO: For a lot of the models available through Google AI Studio, they cant
     # use tools to fetch the docs content. It *might* be worthwhile to actually fetch,
@@ -157,6 +165,7 @@ def ask_question(
     # OR, we could switch to something like VertexAI and see if we have access to more models with tool use
     # there.
 
+    assert client is not None
     prompt = make_prompt(question, with_docs=with_docs)
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
@@ -279,7 +288,12 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.MetavarTypeHelpFormatter)
     parser.add_argument("--questions", type=Path, required=True)
     parser.add_argument("-v", "--verbose", action="count")
-    parser.add_argument("--model", type=str, default="gemini-2.5-flash")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gemini-2.5-flash",
+        help='LLM model to use (e.g. "gemini-2.5-flash"). Use "test:dummy" for random answers without any API calls.',
+    )
     args = parser.parse_args()
     questions_path: Path = args.questions
     verbose: int = args.verbose or 0
