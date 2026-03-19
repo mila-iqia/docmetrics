@@ -7,6 +7,12 @@ inputs:
     description: >
       Path to the questions YAML file, relative to the caller's repository root.
     required: true
+  docs-urls:
+    description: >
+      Space-separated list of documentation URLs to provide as context when running
+      the with-docs evaluation pass. If omitted, only the without-docs pass runs.
+    required: false
+    default: ""
   model:
     description: LLM model to use.
     required: false
@@ -47,10 +53,15 @@ runs:
       env:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
+        DOCS_URLS_ARGS=""
+        if [ -n "${{ inputs.docs-urls }}" ]; then
+          DOCS_URLS_ARGS="--docs-urls ${{ inputs.docs-urls }}"
+        fi
         python -m docmetrics \
           --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
           --output-format json \
+          $DOCS_URLS_ARGS \
           | tee /tmp/docmetrics-current.json
 
     - name: Prepare base branch comparison
@@ -90,10 +101,15 @@ runs:
       env:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
+        DOCS_URLS_ARGS=""
+        if [ -n "${{ inputs.docs-urls }}" ]; then
+          DOCS_URLS_ARGS="--docs-urls ${{ inputs.docs-urls }}"
+        fi
         python -m docmetrics \
           --questions /tmp/base-questions.yaml \
           --model "${{ inputs.model }}" \
           --output-format json \
+          $DOCS_URLS_ARGS \
           | tee /tmp/docmetrics-base.json
 
     - name: Save base branch cache
@@ -115,8 +131,10 @@ runs:
         with open("/tmp/docmetrics-current.json") as f:
             d = json.load(f)
         with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-            out.write(f"score-with-docs={d['with_docs']['score']}\n")
-            out.write(f"score-without-docs={d['without_docs']['score']}\n")
+            if "with_docs" in d:
+                out.write(f"score-with-docs={d['with_docs']['score']}\n")
+            if "without_docs" in d:
+                out.write(f"score-without-docs={d['without_docs']['score']}\n")
         EOF
 
     - name: Post PR comment

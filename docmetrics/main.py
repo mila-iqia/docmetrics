@@ -48,14 +48,6 @@ class Question:
     answer: Letter
     """The correct answer to the question (must be one of the letters in `options`)."""
 
-    docs_urls: list[str] | None = None
-    """A list of URLs to relevant documentation pages.
-
-    The hope is that by reading these pages, the LLM can answer the question more accurately. Note
-    that the LLMs are not going to look at links within these pages, only the content of these
-    pages itself. For example, giving a link to docs.mila.quebec wouldn't be very helpful.
-    """
-
     def __postinit__(self):
         assert self.answer in self.options, "correct answer isn't in the options!"
 
@@ -93,6 +85,7 @@ def evaluate_llm(
     questions: list[Question],
     with_docs: bool,
     model: str,
+    docs_urls: list[str] | None = None,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
@@ -130,6 +123,7 @@ def evaluate_llm(
             question=question,
             with_docs=with_docs,
             model=model,
+            docs_urls=docs_urls or [],
             # Adding this gives the LLM the ability to consult URLs given in the prompt.
             tools=[types.Tool(url_context=types.UrlContext())] if with_docs else None,
         )
@@ -154,6 +148,7 @@ def ask_question(
     with_docs: bool,
     model: str,
     tools: list[types.Tool | Callable] | None,
+    docs_urls: list[str] | None = None,
 ) -> bool | None:
     """Asks a question to the LLM and returns whether the LLM answered correctly.
 
@@ -171,7 +166,7 @@ def ask_question(
     # there.
 
     assert client is not None
-    prompt = make_prompt(question, with_docs=with_docs)
+    prompt = make_prompt(question, with_docs=with_docs, docs_urls=docs_urls or [])
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     agent_answer = get_agent_answer(client, model, tools, prompt)
@@ -274,11 +269,11 @@ def parse_response_fallback(response_str: str) -> Response | None:
         return None
 
 
-def make_prompt(question: Question, with_docs: bool) -> str:
+def make_prompt(question: Question, with_docs: bool, docs_urls: list[str] | None = None) -> str:
     return (
         (
-            ("Based on this documentation: " + ", ".join(question.docs_urls) + ",\n")
-            if with_docs and question.docs_urls
+            ("Based on this documentation: " + ", ".join(docs_urls) + ",\n")
+            if with_docs and docs_urls
             else ""
         )
         # + ((context + "\n\n") if context else "")
@@ -385,17 +380,12 @@ def main():
     output_format: Literal["text", "json"] = args.output_format
     model: str = args.model
 
-    questions = [
-        dataclasses.replace(question, docs_urls=(question.docs_urls or []) + docs_urls)
-        for question in questions
-    ]
-
     score_with_no_context = None
     score_with_docs = None
     if not with_docs_only:
         score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
     if docs_urls or with_docs_only:
-        score_with_docs = evaluate_llm(questions, with_docs=True, model=model)
+        score_with_docs = evaluate_llm(questions, with_docs=True, model=model, docs_urls=docs_urls)
 
     if output_format == "text":
         print(f"{score_with_no_context=}")

@@ -5,13 +5,9 @@
     C: $HOME
     D: $DATASETS
   answer: A
-  docs_urls:
-    - "https://docs.mila.quebec"
 - question: "Which of these is the best location to use to store project code on the Mila cluster?"
   options:
     A: $SCRATCH
     B: $SLURM_TMPDIR
     C: $HOME
   answer: C
-  docs_urls:
-    - "https://docs.mila.quebec"
