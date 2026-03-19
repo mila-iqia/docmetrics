@@ -220,6 +220,8 @@ def test_evaluate_llm_dummy_model():
     assert result.num_questions == len(QUESTIONS)
     assert result.invalid_answers == 0
     assert result.correct_answers <= result.num_questions
+    assert len(result.answers) == len(QUESTIONS)
+    assert all(isinstance(a, bool) for a in result.answers)
 
 
 def test_evaluate_llm_dummy_model_with_docs():
