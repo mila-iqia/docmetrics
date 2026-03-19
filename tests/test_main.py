@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 
 from docmetrics.main import (
+    DUMMY_MODEL,
     EvaluationResult,
     Letter,
     Question,
@@ -211,6 +212,21 @@ def test_evaluate_llm_with_docs_adds_url_tool():
         assert any(
             isinstance(t, types.Tool) and t.url_context is not None for t in config.tools
         ), "Expected a UrlContext tool in the generate_content call"
+
+
+def test_evaluate_llm_dummy_model():
+    """test:dummy model returns results without any API calls."""
+    result = evaluate_llm(QUESTIONS, with_docs=False, model=DUMMY_MODEL)
+    assert result.num_questions == len(QUESTIONS)
+    assert result.invalid_answers == 0
+    assert result.correct_answers <= result.num_questions
+
+
+def test_evaluate_llm_dummy_model_with_docs():
+    """test:dummy model ignores with_docs=True and makes no API calls."""
+    result = evaluate_llm(QUESTIONS, with_docs=True, model=DUMMY_MODEL)
+    assert result.num_questions == len(QUESTIONS)
+    assert result.invalid_answers == 0
 
 
 def test_evaluate_llm_without_docs_no_url_tool():
