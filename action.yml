@@ -11,6 +11,10 @@ inputs:
     description: LLM model to use.
     required: false
     default: gemini-2.5-flash
+  docs-url:
+    description: >
+      Space-separated list of documentation URLs to use as context for all questions.
+    required: false
   gemini-api-key:
     description: >
       Google Gemini API key. Required for Gemini models; omit when using
@@ -23,10 +27,10 @@ inputs:
 
 outputs:
   score-with-docs:
-    description: Score when documentation URLs are provided as context (0.0–1.0).
+    description: Score when documentation URLs are provided as context (0.0-1.0).
     value: ${{ steps.parse-outputs.outputs.score-with-docs }}
   score-without-docs:
-    description: Score when no documentation context is provided (0.0–1.0).
+    description: Score when no documentation context is provided (0.0-1.0).
     value: ${{ steps.parse-outputs.outputs.score-without-docs }}
 
 runs:
@@ -50,6 +54,7 @@ runs:
         python -m docmetrics \
           --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
+          ${{ inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '' }} \
           --output-format json \
           | tee /tmp/docmetrics-current.json
 
@@ -93,6 +98,7 @@ runs:
         python -m docmetrics \
           --questions /tmp/base-questions.yaml \
           --model "${{ inputs.model }}" \
+          ${{ inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '' }} \
           --output-format json \
           | tee /tmp/docmetrics-base.json
 

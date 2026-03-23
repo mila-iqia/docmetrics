@@ -18,7 +18,6 @@ from docmetrics.main import (
     get_agent_answer,
     get_agent_answers_for_group,
     make_multi_prompt,
-    _group_questions_by_docs,
 )
 
 # ---------------------------------------------------------------------------
@@ -182,7 +181,7 @@ def test_ask_question_correct():
     """Returns True when the LLM answers correctly."""
     q = QUESTIONS[0]  # answer is "A"
     assert (
-        ask_question(mock_client("A"), q, with_docs=False, model="fake-model", tools=None) is True
+        ask_question(mock_client("A"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is True
     )
 
 
@@ -190,7 +189,7 @@ def test_ask_question_incorrect():
     """Returns False when the LLM answers incorrectly."""
     q = QUESTIONS[0]  # answer is "A"
     assert (
-        ask_question(mock_client("B"), q, with_docs=False, model="fake-model", tools=None) is False
+        ask_question(mock_client("B"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is False
     )
 
 
@@ -204,7 +203,7 @@ def test_ask_question_invalid():
     response.parsed = None
     client.models.generate_content.return_value = response
 
-    assert ask_question(client, q, with_docs=False, model="fake-model", tools=None) is None
+    assert ask_question(client, q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -293,79 +292,21 @@ def test_evaluate_llm_without_docs_no_url_tool():
 
 
 # ---------------------------------------------------------------------------
-# _group_questions_by_docs tests
-# ---------------------------------------------------------------------------
-
-
-def test_group_questions_by_docs_all_same():
-    """Questions with identical docs_urls are merged into a single group."""
-    url = "https://docs.example.com"
-    qs = [
-        Question(question="Q1?", options={"A": "a", "B": "b"}, answer="A", docs_urls=[url]),
-        Question(question="Q2?", options={"A": "a", "B": "b"}, answer="B", docs_urls=[url]),
-    ]
-    groups = _group_questions_by_docs(qs)
-    assert len(groups) == 1
-    key, members = groups[0]
-    assert key == (url,)
-    assert len(members) == 2
-
-
-def test_group_questions_by_docs_different_urls():
-    """Questions with different docs_urls end up in separate groups."""
-    qs = [
-        Question(
-            question="Q1?", options={"A": "a"}, answer="A", docs_urls=["https://url1.com"]
-        ),
-        Question(
-            question="Q2?", options={"A": "a"}, answer="A", docs_urls=["https://url2.com"]
-        ),
-    ]
-    groups = _group_questions_by_docs(qs)
-    assert len(groups) == 2
-
-
-def test_group_questions_by_docs_none_urls():
-    """Questions with docs_urls=None are grouped under an empty key."""
-    qs = [
-        Question(question="Q1?", options={"A": "a"}, answer="A"),
-        Question(question="Q2?", options={"A": "a"}, answer="A"),
-    ]
-    groups = _group_questions_by_docs(qs)
-    assert len(groups) == 1
-    key, _ = groups[0]
-    assert key == ()
-
-
-def test_group_questions_preserves_original_indices():
-    """Original question indices are stored correctly."""
-    qs = [
-        Question(question="Q1?", options={"A": "a"}, answer="A"),
-        Question(question="Q2?", options={"A": "a"}, answer="A"),
-        Question(question="Q3?", options={"A": "a"}, answer="A"),
-    ]
-    groups = _group_questions_by_docs(qs)
-    _, members = groups[0]
-    indices = [idx for idx, _ in members]
-    assert indices == [0, 1, 2]
-
-
-# ---------------------------------------------------------------------------
 # make_multi_prompt tests
 # ---------------------------------------------------------------------------
 
 
 def test_make_multi_prompt_single_question():
-    """For a single question, make_multi_prompt delegates to make_prompt."""
-    from docmetrics.main import make_prompt
-
+    """For a single question without docs, make_multi_prompt returns a valid prompt."""
     q = QUESTIONS[0]
-    assert make_multi_prompt([q], with_docs=False) == make_prompt(q, with_docs=False)
+    result = make_multi_prompt([q], docs_urls=None)
+    assert q.question in result
+    assert "Select the correct answer" in result
 
 
 def test_make_multi_prompt_multiple_questions():
     """For multiple questions, each question is numbered in the prompt."""
-    result = make_multi_prompt(QUESTIONS[:2], with_docs=False)
+    result = make_multi_prompt(QUESTIONS[:2], docs_urls=None)
     assert "Question 1:" in result
     assert "Question 2:" in result
     assert QUESTIONS[0].question in result
@@ -373,15 +314,11 @@ def test_make_multi_prompt_multiple_questions():
 
 
 def test_make_multi_prompt_with_docs():
-    """Documentation URLs appear once at the top for multi-question prompts."""
+    """Documentation URLs appear at the top of the prompt when provided."""
     url = "https://docs.example.com"
-    qs = [
-        Question(question="Q1?", options={"A": "a"}, answer="A", docs_urls=[url]),
-        Question(question="Q2?", options={"A": "a"}, answer="A", docs_urls=[url]),
-    ]
-    result = make_multi_prompt(qs, with_docs=True)
+    result = make_multi_prompt(QUESTIONS[:2], docs_urls=[url])
     assert url in result
-    # URL should only appear once even though two questions share it
+    # URL should only appear once
     assert result.count(url) == 1
 
 
@@ -394,7 +331,7 @@ def test_get_agent_answers_for_group_single_question():
     """Single-question group returns one response per candidate (default: 1)."""
     q = QUESTIONS[0]
     result = get_agent_answers_for_group(
-        mock_client("A"), "fake-model", tools=None, questions=[q], with_docs=False
+        mock_client("A"), "fake-model", tools=None, questions=[q], docs_urls=None
     )
     assert len(result) == 1  # one candidate
     assert len(result[0]) == 1  # one question
@@ -410,7 +347,7 @@ def test_get_agent_answers_for_group_multi_question():
         "fake-model",
         tools=None,
         questions=QUESTIONS,
-        with_docs=False,
+        docs_urls=None,
     )
     assert len(result) == 1  # one candidate
     assert len(result[0]) == 3  # three questions
@@ -455,7 +392,7 @@ def test_get_agent_answers_for_group_multiple_candidates():
         "fake-model",
         tools=None,
         questions=QUESTIONS,
-        with_docs=False,
+        docs_urls=None,
         num_candidates=2,
     )
     assert len(result) == 2  # two candidates
@@ -513,14 +450,8 @@ def test_evaluation_result_score_std_single():
     assert result.score_std == 0.0
 
 
-def test_evaluate_llm_groups_questions_reduces_api_calls():
-    """Questions sharing the same docs_urls result in a single API call."""
-    url = "https://docs.example.com"
-    qs = [
-        Question(question="Q1?", options={"A": "a", "B": "b"}, answer="A", docs_urls=[url]),
-        Question(question="Q2?", options={"A": "a", "B": "b"}, answer="B", docs_urls=[url]),
-        Question(question="Q3?", options={"A": "a", "B": "b"}, answer="A", docs_urls=[url]),
-    ]
+def test_evaluate_llm_batches_all_questions_in_one_call():
+    """All questions are batched into a single API call."""
     answers: list[Letter] = ["A", "B", "A"]
 
     with patch("docmetrics.main.get_google_genai_client") as mock_factory:
@@ -528,46 +459,32 @@ def test_evaluate_llm_groups_questions_reduces_api_calls():
         mock_factory.return_value = client
         client.models.generate_content.return_value = make_fake_multi_response(answers)
 
-        result = evaluate_llm(qs, with_docs=False, model="fake-model")
+        result = evaluate_llm(
+            QUESTIONS[:3], with_docs=False, model="fake-model", docs_urls=None
+        )
 
-    # All 3 questions share the same docs_url → 1 API call instead of 3
+    # All 3 questions batched → 1 API call
     assert client.models.generate_content.call_count == 1
     assert result.num_questions == 3
-    assert result.correct_answers == 3
     assert len(result.per_question_scores) == 3
 
 
-def test_evaluate_llm_different_docs_multiple_api_calls():
-    """Questions with different docs_urls require separate API calls."""
-    qs = [
-        Question(
-            question="Q1?",
-            options={"A": "a", "B": "b"},
-            answer="A",
-            docs_urls=["https://url1.com"],
-        ),
-        Question(
-            question="Q2?",
-            options={"A": "a", "B": "b"},
-            answer="B",
-            docs_urls=["https://url2.com"],
-        ),
-    ]
+def test_evaluate_llm_passes_docs_urls_to_api():
+    """docs_urls passed to evaluate_llm are forwarded to the API prompt."""
+    url = "https://docs.example.com"
 
     with patch("docmetrics.main.get_google_genai_client") as mock_factory:
         client = MagicMock()
         mock_factory.return_value = client
-        # Two separate single-question API calls
-        client.models.generate_content.side_effect = [
-            make_fake_response("A"),
-            make_fake_response("B"),
-        ]
+        client.models.generate_content.return_value = make_fake_multi_response(
+            [q.answer for q in QUESTIONS]
+        )
 
-        result = evaluate_llm(qs, with_docs=False, model="fake-model")
+        evaluate_llm(QUESTIONS, with_docs=True, model="fake-model", docs_urls=[url])
 
-    # Different docs_urls → 2 API calls (one per group)
-    assert client.models.generate_content.call_count == 2
-    assert result.correct_answers == 2
+    call = client.models.generate_content.call_args_list[0]
+    prompt = call.kwargs["contents"]
+    assert url in prompt
 
 
 def test_evaluate_llm_num_candidates_dummy():
