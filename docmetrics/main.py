@@ -302,7 +302,7 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
 
 
 def main():
-    parser = argparse.ArgumentParser(formatter_class=argparse.MetavarTypeHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="count")
     # Evaluate args on the top-level parser so `docmetrics` (no subcommand) works.
     _add_evaluate_args(parser, questions_required=False)
@@ -311,7 +311,6 @@ def main():
 
     evaluate_parser = subparsers.add_parser(
         "evaluate",
-        formatter_class=argparse.MetavarTypeHelpFormatter,
         help="Evaluate an LLM on documentation questions (default when no subcommand is given).",
     )
     evaluate_parser.add_argument("-v", "--verbose", action="count")
@@ -319,7 +318,6 @@ def main():
 
     quiz_parser = subparsers.add_parser(
         "quiz",
-        formatter_class=argparse.MetavarTypeHelpFormatter,
         help="Take the quiz interactively in the terminal.",
     )
     quiz_parser.add_argument("-v", "--verbose", action="count")
