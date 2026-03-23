@@ -86,9 +86,10 @@ jobs:
 
   test-action:
     name: Test the DocMetrics action
+    needs: [unit_tests]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run DocMetrics action
         uses: ./
         with:
@@ -98,9 +99,10 @@ jobs:
 
   test-docmetrics-docs:
     name: Test DocMetrics docs with the action
+    needs: ["test-action"]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run DocMetrics action on docmetrics docs
         uses: ./
         with:
