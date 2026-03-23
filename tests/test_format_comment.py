@@ -3,8 +3,6 @@
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Load the script as a module (it lives outside the package tree)
 # ---------------------------------------------------------------------------
