@@ -20,15 +20,17 @@ def run_quiz(questions: list[Question]) -> None:
     console.print("Press [bold]Ctrl+C[/bold] or select [bold]Quit[/bold] to exit.\n")
 
     for i, question in enumerate(questions, 1):
-        choices = [
-            questionary.Choice(title=f"{letter}: {text}", value=letter)
-            for letter, text in question.options.items()
-        ]
+        console.print(f"[bold][{i}/{total}] {question.question}[/bold]")
+        for letter, text in question.options.items():
+            console.print(f"  {letter}: {text}")
+        console.print()
+
+        choices = [questionary.Choice(title=letter, value=letter) for letter in question.options]
         choices.append(questionary.Choice(title="Quit (q)", value="q"))
 
         try:
             answer = questionary.select(
-                f"[{i}/{total}] {question.question}",
+                "Your answer:",
                 choices=choices,
             ).ask()
         except KeyboardInterrupt:

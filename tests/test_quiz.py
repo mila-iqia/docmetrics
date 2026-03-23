@@ -106,3 +106,13 @@ def test_quiz_empty_questions(capsys):
     mock_select.assert_not_called()
     out = capsys.readouterr().out
     assert "Score:" not in out
+
+
+def test_quiz_options_displayed_in_output(capsys):
+    """Option text is printed via Rich before the select widget, so long answers wrap properly."""
+    answers = [QUESTIONS[0].answer, "q"]
+    with patch("docmetrics.quiz.questionary.select", side_effect=_mock_select(answers)):
+        run_quiz(QUESTIONS)
+    out = capsys.readouterr().out
+    for letter, text in QUESTIONS[0].options.items():
+        assert f"{letter}: {text}" in out
