@@ -44,14 +44,6 @@ class Question:
     answer: Letter
     """The correct answer to the question (must be one of the letters in `options`)."""
 
-    docs_urls: list[str] | None = None
-    """A list of URLs to relevant documentation pages.
-
-    The hope is that by reading these pages, the LLM can answer the question more accurately. Note
-    that the LLMs are not going to look at links within these pages, only the content of these
-    pages itself. For example, giving a link to docs.mila.quebec wouldn't be very helpful.
-    """
-
     def __postinit__(self):
         assert self.answer in self.options, "correct answer isn't in the options!"
 
@@ -89,6 +81,7 @@ def evaluate_llm(
     questions: list[Question],
     with_docs: bool,
     model: str,
+    docs_urls: list[str] | None = None,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
@@ -98,6 +91,7 @@ def evaluate_llm(
     questions: The list of questions to ask the LLM.
     with_docs: Whether to provide documentation URLs as context to the LLM.
     model: The name of the LLM model to use.
+    docs_urls: A list of URLs to relevant documentation pages to provide as context.
 
     Returns
     -------
@@ -126,6 +120,7 @@ def evaluate_llm(
             question=question,
             with_docs=with_docs,
             model=model,
+            docs_urls=docs_urls,
             # Adding this gives the LLM the ability to consult URLs given in the prompt.
             tools=[types.Tool(url_context=types.UrlContext())] if with_docs else None,
         )
@@ -149,6 +144,7 @@ def ask_question(
     question: Question,
     with_docs: bool,
     model: str,
+    docs_urls: list[str] | None,
     tools: list[types.Tool | Callable] | None,
 ) -> bool | None:
     """Asks a question to the LLM and returns whether the LLM answered correctly.
@@ -167,7 +163,7 @@ def ask_question(
     # there.
 
     assert client is not None
-    prompt = make_prompt(question, with_docs=with_docs)
+    prompt = make_prompt(question, with_docs=with_docs, docs_urls=docs_urls)
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     agent_answer = get_agent_answer(client, model, tools, prompt)
@@ -270,11 +266,11 @@ def parse_response_fallback(response_str: str) -> Response | None:
         return None
 
 
-def make_prompt(question: Question, with_docs: bool) -> str:
+def make_prompt(question: Question, with_docs: bool, docs_urls: list[str] | None = None) -> str:
     return (
         (
-            ("Based on this documentation: " + ", ".join(question.docs_urls) + ",\n")
-            if with_docs and question.docs_urls
+            ("Based on this documentation: " + ", ".join(docs_urls) + ",\n")
+            if with_docs and docs_urls
             else ""
         )
         # + ((context + "\n\n") if context else "")
@@ -292,6 +288,12 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         type=str,
         default="gemini-2.5-flash",
         help='LLM model to use (e.g. "gemini-2.5-flash"). Use "test:dummy" for random answers without any API calls.',
+    )
+    p.add_argument(
+        "--docs-url",
+        nargs="*",
+        default=None,
+        help="URLs to documentation pages that will be used as context for all questions.",
     )
     p.add_argument(
         "--output-format",
@@ -348,8 +350,9 @@ def main():
 
     questions = load_questions(questions_path=args.questions)
     model: str = args.model
-    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
-    score_with_mila_docs_urls = evaluate_llm(questions, with_docs=True, model=model)
+    docs_urls: list[str] | None = args.docs_url if args.docs_url else None
+    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model, docs_urls=None)
+    score_with_docs = evaluate_llm(questions, with_docs=True, model=model, docs_urls=docs_urls)
 
     if args.output_format == "json":
         print(
@@ -362,17 +365,17 @@ def main():
                         "score": score_with_no_context.score,
                     },
                     "with_docs": {
-                        "num_questions": score_with_mila_docs_urls.num_questions,
-                        "correct_answers": score_with_mila_docs_urls.correct_answers,
-                        "invalid_answers": score_with_mila_docs_urls.invalid_answers,
-                        "score": score_with_mila_docs_urls.score,
+                        "num_questions": score_with_docs.num_questions,
+                        "correct_answers": score_with_docs.correct_answers,
+                        "invalid_answers": score_with_docs.invalid_answers,
+                        "score": score_with_docs.score,
                     },
                 }
             )
         )
     else:
         print(f"{score_with_no_context=}")
-        print(f"{score_with_mila_docs_urls=}")
+        print(f"{score_with_docs=}")
 
 
 if __name__ == "__main__":

@@ -34,7 +34,8 @@ jobs:
       - name: Run DocMetrics action on docmetrics docs
         uses: ./
         with:
-          questions-file: docmetrics_docs_questions.yaml
+          questions-file: sample_questions.yaml
+          docs-url: https://mila-iqia.github.io/docmetrics
           model: gemini-2.5-flash
           gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

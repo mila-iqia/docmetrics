@@ -145,7 +145,7 @@ def test_ask_question_correct():
     """Returns True when the LLM answers correctly."""
     q = QUESTIONS[0]  # answer is "A"
     assert (
-        ask_question(mock_client("A"), q, with_docs=False, model="fake-model", tools=None) is True
+        ask_question(mock_client("A"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is True
     )
 
 
@@ -153,7 +153,7 @@ def test_ask_question_incorrect():
     """Returns False when the LLM answers incorrectly."""
     q = QUESTIONS[0]  # answer is "A"
     assert (
-        ask_question(mock_client("B"), q, with_docs=False, model="fake-model", tools=None) is False
+        ask_question(mock_client("B"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is False
     )
 
 
@@ -167,7 +167,7 @@ def test_ask_question_invalid():
     response.parsed = None
     client.models.generate_content.return_value = response
 
-    assert ask_question(client, q, with_docs=False, model="fake-model", tools=None) is None
+    assert ask_question(client, q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is None
 
 
 # ---------------------------------------------------------------------------
