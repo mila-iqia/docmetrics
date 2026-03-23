@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 # https://stackoverflow.com/a/72408109/6388696
 # https://docs.github.com/en/actions/using-jobs/using-concurrency#example-using-concurrency-to-cancel-any-in-progress-job-or-run
@@ -82,6 +83,32 @@ jobs:
         with:
           name: coverage-reports-unit-tests-${{ matrix.platform }}-${{ matrix.python-version }}
           path: ./coverage.xml
+
+  test-action:
+    name: Test the DocMetrics action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run DocMetrics action
+        uses: ./
+        with:
+          questions-file: sample_questions.yaml
+          docs-url: https://mila-iqia.github.io/docmetrics # not used
+          model: test:dummy
+
+  test-docmetrics-docs:
+    name: Test DocMetrics docs with the action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run DocMetrics action on docmetrics docs
+        uses: ./
+        with:
+          questions-file: sample_questions.yaml
+          model: gemini-2.5-flash
+          docs-url: https://mila-iqia.github.io/docmetrics
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # https://about.codecov.io/blog/uploading-code-coverage-in-a-separate-job-on-github-actions/
   upload-coverage-codecov:
