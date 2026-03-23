@@ -1,9 +1,9 @@
 - question: "What does DocMetrics measure?"
   options:
-    A: Code coverage across a project's test suite
+    A: Computes the clarity of documentation using NLP techniques
     B: Documentation usefulness by comparing LLM accuracy with and without docs as context
-    C: API response times for documentation endpoints
-    D: The readability score of documentation prose
+    C: Documentation usefulness by comparing human ratings to LLM ratings
+    D: Computes a readability score for documentation using LLMs
   answer: B
 # - question: "How do you install docmetrics using uv?"
 #   options:
