@@ -21,7 +21,7 @@
     A: "Only legacy CPU nodes featuring integrated graphics capabilities"
     B: "A heterogeneous, Slurm-managed cluster featuring multi-core CPUs and various generations of GPUs (including H100, L40S, A100, and RTX8000)"
     C: "Distributed cloud computing credits restricted to AWS infrastructure exclusively"
-    D: "A single homogenous supercomputer entirely composed of V100 architectures"
+    D: "A single homogeneous supercomputer entirely composed of V100 architectures"
     E: "Experimental quantum computing accelerators only"
   answer: B
 
@@ -164,7 +164,7 @@
   options:
     A: "The IDT Team via Slack or office hours"
     B: "The IT Team, because it involves SSH tunneling and jump host infrastructure"
-    C: "A and B, depending entirely on whether the failure point is a physical infrastructure timeout (IT) or a Python environment dependency error (IDT)"
+    C: "IT first, since they manage SSH connection issues. IDT only as a last resort (or via Slack)."
     D: "Compute Canada"
     E: "No one, the specific command has been deprecated and is no longer supported"
   answer: C
@@ -217,7 +217,7 @@
 - question: "How do I contact the IDT team?"
   options:
     A: "By submitting a hardware replacement ticket for a broken GPU"
-    B: "By visiting their physical office hours in room A.17, or asking questions in tool-specific Slack channels like #mila-cluster, #pytorch, or #jax"
+    B: "By asking questions in tool-specific Slack channels like #mila-cluster, #pytorch, or #jax, or by visiting their physical office hours in room A.17 during IDT Office Hours."
     C: "By emailing it-support@mila.quebec"
     D: "By calling the building's front desk receptionist"
     E: "A and C"
@@ -253,7 +253,7 @@
 - question: "How can I check the number of available GPUs on the Mila cluster?"
   options:
     A: "By guessing the load based on the length of the queue string"
-    B: "By consulting the official Mila dashboard at dashboard.server.mila.quebec, or by using tools like `nvidia-smi` inside an active node"
+    B: "By running `savail` command on the cluster"
     C: "By asking manually in the #pytorch channel every hour"
     D: "By walking into the datacenter and manually counting the active servers"
     E: "It is technically impossible to check available GPU metrics"
@@ -263,7 +263,7 @@
   options:
     A: "0"
     B: "4"
-    C: "16 (distributed across exactly 2 nodes)"
+    C: "16"
     D: "168"
     E: "368"
   answer: C
@@ -286,6 +286,7 @@
     E: "408"
   answer: D
 
+# TODO: fix question
 - question: "Which partition should I use if I want do to interactive development on the Mila cluster?"
   options:
     A: "The `main` partition (for standard GPU access), or `unkillable-cpu` for CPU-only lightweight jobs"
@@ -295,6 +296,7 @@
     E: "You should simply run the command without explicitly declaring a partition"
   answer: A
 
+# TODO: fix question
 - question: "Which partition should I use if I want to run a multi-GPU job on the Mila cluster?"
   options:
     A: "The `long-cpu` partition"
@@ -313,6 +315,7 @@
     E: "Because you optimally stored your training data in `$SLURM_TMPDIR`"
   answer: B
 
+# TODO: fix question
 - question: "Which cluster should I use first if I need to run large LLM training jobs (multiple H100 GPUS)?"
   options:
     A: "The Mila login nodes"
@@ -565,13 +568,13 @@
     E: "A and B"
   answer: B
 
-- question: "First Steps: How do I install milatools?"
+- question: "First Steps: What is the preferred way to install milatools?"
   options:
-    A: "By running the command `pip install -U milatools` strictly within your local environment"
-    B: "By downloading the pre-compiled binary directly from the Windows App Store"
-    C: "By cloning the entire Linux kernel repository and compiling the tools module"
+    A: "By running the `uv tool install milatools` command on a local terminal"
+    B: "By running the command `pip install -U milatools` within your local terminal"
+    C: "By downloading the pre-compiled binary directly from the Windows App Store"
     D: "By officially opening an IT support ticket and requesting the execution binary via email"
-    E: "milatools comes pre-installed by default on all laptops globally"
+    E: "Milatools is a proprietary software that cannot be installed by users; it is only available on the cluster login nodes by default"
   answer: A
 
 - question: "First Steps: How do I configure milatools?"
@@ -585,7 +588,7 @@
 
 - question: "First Steps: How do I install uv on the cluster?"
   options:
-    A: "By running the standalone installation script explicitly on a requested compute node (or interactive job), as detailed exhaustively in the 'Install uv on the cluster' quickstart guide"
+    A: "By running the curl command from the uv docs on a login node"
     B: "By submitting an IT ticket demanding they install it globally for all users"
     C: "It is already installed globally by default on all nodes, meaning you do not need to install it"
     D: "By using the `module load uv` command on the login node"
@@ -628,6 +631,7 @@
     E: "Systematically using proper checkpointing logic to continuously save model state dicts to `$SCRATCH` in case of aggressive preemption"
   answer: D
 
+# TODO: Fix/remove question.
 - question: "Am I allowed to use Claude code with `--dangerously-skip-permissions` on the cluster?"
   options:
     A: "Yes, Anthropic heavily encourages this exact flag for supercomputer environments"
