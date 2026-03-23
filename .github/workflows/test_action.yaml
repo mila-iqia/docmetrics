@@ -25,3 +25,16 @@ jobs:
         with:
           questions-file: sample_questions.yaml
           model: test:dummy
+
+  test-docmetrics-docs:
+    name: Test DocMetrics docs with the action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run DocMetrics action on docmetrics docs
+        uses: ./
+        with:
+          questions-file: docmetrics_docs_questions.yaml
+          model: gemini-2.5-flash
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
