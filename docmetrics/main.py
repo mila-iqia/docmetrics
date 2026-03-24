@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 import pydantic
+import rich.console
 import rich.logging
 import yaml
 from dotenv import load_dotenv
@@ -335,7 +336,7 @@ def main():
 
     logging.basicConfig(
         level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
-        handlers=[rich.logging.RichHandler(markup=True)],
+        handlers=[rich.logging.RichHandler(markup=True, console=rich.console.Console(stderr=True))],
         format="%(message)s",
     )
     logger.setLevel(  # this logger specifically.

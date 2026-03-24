@@ -68,8 +68,7 @@ def format_comment(
             )
         else:
             lines.append(
-                f"> Merging this PR into {base_ref_label} will **not change** the"
-                f" with-docs score."
+                f"> Merging this PR into {base_ref_label} will **not change** the with-docs score."
             )
         lines.append("")
 
@@ -132,6 +131,7 @@ def format_comment(
                 wi_change = f"{result_icon(b_wi)} → {result_icon(c_wi)}"
                 lines.append(f"| {i + 1} | {q_label} | {no_change} | {wi_change} |")
             lines += ["", "</details>", ""]
+
     elif cur_no_answers or cur_wi_answers:
         n = max(len(cur_no_answers), len(cur_wi_answers))
         lines += [
@@ -149,9 +149,11 @@ def format_comment(
         lines += ["", "</details>", ""]
 
     # ── Footer ───────────────────────────────────────────────────────────────
+
     lines += [
-        "---",
+        "",
         f"*Model: `{model}` · Questions: `{questions_file}`*",
+        "*Comparing: PR documentation (current) vs. base documentation*",
     ]
 
     return "\n".join(lines)

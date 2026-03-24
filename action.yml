@@ -15,6 +15,10 @@ inputs:
     description: >
       Space-separated list of documentation URLs to use as context for all questions.
     required: false
+  base-docs-url:
+    description: >
+      Documentation URL to use for base branch comparison. Defaults to docs-url if not provided.
+    required: false
   gemini-api-key:
     description: >
       Google Gemini API key. Required for Gemini models; omit when using
@@ -98,7 +102,7 @@ runs:
         python -m docmetrics \
           --questions /tmp/base-questions.yaml \
           --model "${{ inputs.model }}" \
-          ${{ inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '' }} \
+          ${{ inputs.base-docs-url && format('--docs-url {0}', inputs.base-docs-url) || (inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '') }} \
           --output-format json \
           | tee /tmp/docmetrics-base.json
 
