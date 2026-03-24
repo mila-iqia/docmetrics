@@ -108,27 +108,29 @@ def format_comment(
     cur_wi_answers: list = cur_wi.get("answers", [])
 
     if base:
-        base_no = base["without_docs"]
-        base_wi = base["with_docs"]
-
-        label = f"`{base_ref}`"
-        if base_source == "cached":
-            label += " *(cached)*"
-        elif base_source == "computed":
-            label += " *(computed)*"
-
-        lines.append(
-            f"| **Base ({label})** "
-            f"| {fmt_score(base_no['score'], base_no['correct_answers'], base_no['num_questions'])} "
-            f"| {fmt_score(base_wi['score'], base_wi['correct_answers'], base_wi['num_questions'])} "
-            f"| {fmt_delta(base_wi['score'], base_no['score'])} |"
-        )
-        lines.append(
-            f"| **Change** "
-            f"| {fmt_delta(cur_no['score'], base_no['score'])} "
-            f"| {fmt_delta(cur_wi['score'], base_wi['score'])} "
-            f"| — |"
-        )
+        base_no_answers: list = base["without_docs"].get("answers", [])
+        base_wi_answers: list = base["with_docs"].get("answers", [])
+        changed = [
+            (i, b_no, c_no, b_wi, c_wi)
+            for i, (b_no, c_no, b_wi, c_wi) in enumerate(
+                zip(base_no_answers, cur_no_answers, base_wi_answers, cur_wi_answers)
+            )
+            if b_no != c_no or b_wi != c_wi
+        ]
+        if changed:
+            lines += [
+                "<details>",
+                f"<summary>📋 {len(changed)} question(s) with changed results</summary>",
+                "",
+                "| # | Question | Without docs | With docs |",
+                "|:---|:---|:---:|:---:|",
+            ]
+            for i, b_no, c_no, b_wi, c_wi in changed:
+                q_label = question_label(questions, i)
+                no_change = f"{result_icon(b_no)} → {result_icon(c_no)}"
+                wi_change = f"{result_icon(b_wi)} → {result_icon(c_wi)}"
+                lines.append(f"| {i + 1} | {q_label} | {no_change} | {wi_change} |")
+            lines += ["", "</details>", ""]
 
     elif cur_no_answers or cur_wi_answers:
         n = max(len(cur_no_answers), len(cur_wi_answers))
@@ -153,13 +155,6 @@ def format_comment(
         f"*Model: `{model}` · Questions: `{questions_file}`*",
         "*Comparing: PR documentation (current) vs. base documentation*",
     ]
-
-    # print("\n".join(lines))
-
-    # lines += [
-    #     "---",
-    #     f"*Model: `{model}` · Questions: `{questions_file}`*",
-    # ]
 
     return "\n".join(lines)
 
