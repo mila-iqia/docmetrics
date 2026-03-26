@@ -105,6 +105,15 @@ def _is_local_url(url: str) -> bool:
     return urlparse(url).hostname in ("localhost", "127.0.0.1", "::1")
 
 
+def _is_allowed_docs_url(url: str, docs_urls: list[str]) -> bool:
+    """Returns True if `url` is under at least one of the given docs base URLs."""
+    for base in docs_urls:
+        base = base.rstrip("/")
+        if url == base or url.startswith(base + "/"):
+            return True
+    return False
+
+
 def _fetch_url(url: str) -> str:
     """Fetch URL content via httpx, stripping HTML tags if the response is HTML."""
     response = httpx.get(url, follow_redirects=True, timeout=30)
@@ -141,6 +150,7 @@ def _get_agent_answer_ollama(
     prompt: str,
     ollama_url: str = OLLAMA_DEFAULT_URL,
     use_web_fetch: bool = False,
+    docs_urls: list[str] | None = None,
 ) -> "Response | None":
 
     client = _get_ollama_client(ollama_url)
@@ -176,16 +186,20 @@ def _get_agent_answer_ollama(
         for tool_call in response.message.tool_calls:
             if tool_call.function.name == "web_fetch":
                 url = tool_call.function.arguments.get("url", "")
-                logger.info(f"LLM fetching documentation URL: {url}")
-                use_ollama_fetch = bool(os.environ.get("OLLAMA_API_KEY")) and not _is_local_url(url)
-                try:
-                    if use_ollama_fetch:
-                        content = str(client.web_fetch(**tool_call.function.arguments))
-                    else:
-                        content = _fetch_url(url)
-                except Exception as e:
-                    logger.warning(f"web_fetch failed for {url}: {e}")
-                    content = f"Error fetching URL: {e}"
+                if docs_urls and not _is_allowed_docs_url(url, docs_urls):
+                    logger.warning(f"LLM requested disallowed URL (blocked): {url}")
+                    content = f"Access denied: {url!r} is not under the allowed documentation URLs."
+                else:
+                    logger.info(f"LLM fetching documentation URL: {url}")
+                    use_ollama_fetch = bool(os.environ.get("OLLAMA_API_KEY")) and not _is_local_url(url)
+                    try:
+                        if use_ollama_fetch:
+                            content = str(client.web_fetch(**tool_call.function.arguments))
+                        else:
+                            content = _fetch_url(url)
+                    except Exception as e:
+                        logger.warning(f"web_fetch failed for {url}: {e}")
+                        content = f"Error fetching URL: {e}"
             else:
                 logger.warning(f"LLM requested unknown tool: {tool_call.function.name}")
                 content = f"Tool {tool_call.function.name} not found"
@@ -324,7 +338,7 @@ def ask_question(
         # Use web_fetch tool when docs are given as URLs (not already inlined via --docs-file).
         use_web_fetch = with_docs and bool(docs_urls) and docs_content is None
         agent_answer = _get_agent_answer_ollama(
-            model, prompt, ollama_url, use_web_fetch=use_web_fetch
+            model, prompt, ollama_url, use_web_fetch=use_web_fetch, docs_urls=docs_urls
         )
         if not agent_answer:
             logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
