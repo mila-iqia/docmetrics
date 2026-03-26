@@ -3,6 +3,7 @@ import dataclasses
 import functools
 import json
 import logging
+import os
 import random
 import re
 import warnings
@@ -24,6 +25,10 @@ Letter = Literal["A", "B", "C", "D", "E"]
 
 DUMMY_MODEL = "test:dummy"
 """A model name that returns a random answer without calling any external API."""
+OLLAMA_PREFIX = "ollama:"
+"""Prefix for Ollama model names, e.g. 'ollama:qwen3-coder-next:latest'."""
+OLLAMA_DEFAULT_URL = "http://localhost:11434"
+"""Default base URL for the Ollama server."""
 __all__ = [
     "evaluate_llm",
     "ask_question",
@@ -66,6 +71,88 @@ def get_google_genai_client():
     return genai.Client()
 
 
+def _is_ollama_model(model: str) -> bool:
+    return model.startswith(OLLAMA_PREFIX)
+
+
+def _ollama_model_name(model: str) -> str:
+    """Strips the 'ollama:' prefix to get the bare model name.
+
+    >>> _ollama_model_name("ollama:qwen3-coder-next:latest")
+    'qwen3-coder-next:latest'
+    """
+    return model.removeprefix(OLLAMA_PREFIX)
+
+
+@functools.cache
+def _get_ollama_client(base_url: str = OLLAMA_DEFAULT_URL):
+    load_dotenv()  # read the OLLAMA_API_KEY from the .env file if present.
+    import ollama
+
+    return ollama.Client(
+        host=base_url, headers={"Authorization": "Bearer " + os.environ["OLLAMA_API_KEY"]}
+    )
+
+
+def _get_agent_answer_ollama(
+    model: str,
+    prompt: str,
+    ollama_url: str = OLLAMA_DEFAULT_URL,
+    use_web_fetch: bool = False,
+) -> "Response | None":
+    import ollama as ollama_lib
+
+    client = _get_ollama_client(ollama_url)
+    ollama_model = _ollama_model_name(model)
+    schema = Response.model_json_schema()
+    full_prompt = (
+        prompt
+        + f"\nRespond with a JSON object matching this schema: {json.dumps(schema)}\n"
+        + 'Example: {"answer": "A", "justification": "Because..."}'
+    )
+
+    messages: list = [{"role": "user", "content": full_prompt}]
+    tools = [ollama_lib.web_fetch] if use_web_fetch else None
+
+    while True:
+        response = client.chat(
+            model=ollama_model,
+            messages=messages,
+            tools=tools,
+            format="json" if not tools else None,
+        )
+        messages.append(response.message)
+
+        if not response.message.tool_calls:
+            content = response.message.content
+            if not content:
+                return None
+            try:
+                return Response.model_validate_json(content)
+            except pydantic.ValidationError:
+                return parse_response_fallback(content)
+
+        for tool_call in response.message.tool_calls:
+            if tool_call.function.name == "web_fetch":
+                url = tool_call.function.arguments.get("url", "")
+                logger.info(f"LLM fetching documentation URL: {url}")
+                assert "localhost" not in url, (
+                    "web_fetch is happening on the server-side. Can't fetch a locally-hosted page."
+                )
+                try:
+                    result = client.web_fetch(**tool_call.function.arguments)
+                    content = str(result)
+                except Exception as e:
+                    logger.warning(f"web_fetch failed for {url}: {e}")
+                    content = f"Error fetching URL: {e}"
+            else:
+                logger.warning(f"LLM requested unknown tool: {tool_call.function.name}")
+                content = f"Tool {tool_call.function.name} not found"
+            messages.append(
+                {"role": "tool", "content": content, "tool_name": tool_call.function.name}
+            )
+
+
 @dataclasses.dataclass(frozen=True)
 class EvaluationResult:
     num_questions: int
@@ -86,6 +173,7 @@ def evaluate_llm(
     model: str,
     docs_urls: list[str] | None = None,
     docs_files: list[Path] | None = None,
+    ollama_url: str = OLLAMA_DEFAULT_URL,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
@@ -97,6 +185,7 @@ def evaluate_llm(
     model: The name of the LLM model to use.
     docs_urls: A list of URLs to relevant documentation pages to provide as context.
     docs_files: A list of local file paths whose content will be inlined into the prompt.
+    ollama_url: Base URL of the Ollama server (only used when model has the 'ollama:' prefix).
 
     Returns
     -------
@@ -106,7 +195,7 @@ def evaluate_llm(
     Notes
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
-    client = None if model == DUMMY_MODEL else get_google_genai_client()
+    client = None if model == DUMMY_MODEL or _is_ollama_model(model) else get_google_genai_client()
     # for model_config in client.models.list().page:
     #     if model_config.supported_actions and "generateContent" in model_config.supported_actions:
     #         logger.info(f"Available model: {model_config.name}")
@@ -132,9 +221,14 @@ def evaluate_llm(
             model=model,
             docs_urls=docs_urls,
             docs_content=docs_content,
+            ollama_url=ollama_url,
             # Adding this gives the LLM the ability to consult URLs given in the prompt.
-            # Not needed (or wanted) when docs are inlined via docs_files.
-            tools=[types.Tool(url_context=types.UrlContext())] if with_docs and not docs_files else None,
+            # Not needed (or wanted) when docs are inlined via docs_files or for Ollama models.
+            tools=(
+                [types.Tool(url_context=types.UrlContext())]
+                if with_docs and not docs_files and not _is_ollama_model(model)
+                else None
+            ),
         )
         answers.append(result)
         if result is None:
@@ -161,6 +255,7 @@ def ask_question(
     docs_urls: list[str] | None,
     tools: list[types.Tool | Callable] | None,
     docs_content: str | None = None,
+    ollama_url: str = OLLAMA_DEFAULT_URL,
 ) -> bool | None:
     """Asks a question to the LLM and returns whether the LLM answered correctly.
 
@@ -171,6 +266,24 @@ def ask_question(
         logger.info(f"Correct answer: {question.answer}, dummy answer: {dummy_answer}")
         return dummy_answer == question.answer
 
+    if _is_ollama_model(model):
+        prompt = make_prompt(
+            question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
+        )
+        logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
+        # Use web_fetch tool when docs are given as URLs (not already inlined via --docs-file).
+        use_web_fetch = with_docs and bool(docs_urls) and docs_content is None
+        agent_answer = _get_agent_answer_ollama(
+            model, prompt, ollama_url, use_web_fetch=use_web_fetch
+        )
+        if not agent_answer:
+            logger.error("LLM's answer couldn't be parsed!")
+            return None
+        logger.info(f"Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
+        if agent_answer.justification:
+            logger.debug(f"LLM's justification: {agent_answer.justification}")
+        return agent_answer.answer == question.answer
+
     # TODO: For a lot of the models available through Google AI Studio, they can't
     # use tools to fetch the docs content. It *might* be worthwhile to actually fetch,
     # parse, and embed the page into the prompt ourselves for those models to get results with mode models.
@@ -178,7 +291,9 @@ def ask_question(
     # there.
 
     assert client is not None
-    prompt = make_prompt(question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content)
+    prompt = make_prompt(
+        question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
+    )
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     agent_answer = get_agent_answer(client, model, tools, prompt)
@@ -308,7 +423,7 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         "--model",
         type=str,
         default="gemini-2.5-flash",
-        help='LLM model to use (e.g. "gemini-2.5-flash"). Use "test:dummy" for random answers without any API calls.',
+        help='LLM model to use (e.g. "gemini-2.5-flash", "ollama:qwen3-coder-next:latest"). Use "test:dummy" for random answers without any API calls.',
     )
     p.add_argument(
         "--docs-url",
@@ -322,6 +437,12 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         type=Path,
         default=None,
         help="Local file paths whose content will be inlined into the prompt as documentation context.",
+    )
+    p.add_argument(
+        "--ollama-url",
+        type=str,
+        default=OLLAMA_DEFAULT_URL,
+        help=f"Base URL of the Ollama server (default: {OLLAMA_DEFAULT_URL}). Only used with 'ollama:' models.",
     )
     p.add_argument(
         "--output-format",
@@ -358,7 +479,9 @@ def main():
 
     logging.basicConfig(
         level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
-        handlers=[rich.logging.RichHandler(markup=True, console=rich.console.Console(stderr=True))],
+        handlers=[
+            rich.logging.RichHandler(markup=True, console=rich.console.Console(stderr=True))
+        ],
         format="%(message)s",
     )
     logger.setLevel(  # this logger specifically.
@@ -380,10 +503,20 @@ def main():
     model: str = args.model
     docs_urls: list[str] | None = args.docs_url if args.docs_url else None
     docs_files: list[Path] | None = args.docs_file if args.docs_file else None
+    ollama_url: str = args.ollama_url
     if docs_urls and docs_files:
         parser.error("--docs-url and --docs-file are mutually exclusive.")
-    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
-    score_with_docs = evaluate_llm(questions, with_docs=True, model=model, docs_urls=docs_urls, docs_files=docs_files)
+    score_with_no_context = evaluate_llm(
+        questions, with_docs=False, model=model, ollama_url=ollama_url
+    )
+    score_with_docs = evaluate_llm(
+        questions,
+        with_docs=True,
+        model=model,
+        docs_urls=docs_urls,
+        docs_files=docs_files,
+        ollama_url=ollama_url,
+    )
 
     if args.output_format == "json":
         print(
