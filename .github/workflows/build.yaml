@@ -118,15 +118,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Build PR documentation
-        run: uv run mkdocs build
-
       - name: Serve PR docs in background
         run: |
-          cd site
-          python -m http.server 8000 &
+          uv run mkdocs serve &
           echo $! > /tmp/docs_server.pid
-          cd ..
 
       - name: Wait for docs server to be ready
         run: |
