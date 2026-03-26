@@ -84,13 +84,19 @@ def _ollama_model_name(model: str) -> str:
     return model.removeprefix(OLLAMA_PREFIX)
 
 
+OLLAMA_WEB_FETCH_SUPPORTED = "OLLAMA_API_KEY" in os.environ
+
+
 @functools.cache
 def _get_ollama_client(base_url: str = OLLAMA_DEFAULT_URL):
     load_dotenv()  # read the OLLAMA_API_KEY from the .env file if present.
     import ollama
 
     return ollama.Client(
-        host=base_url, headers={"Authorization": "Bearer " + os.environ["OLLAMA_API_KEY"]}
+        host=base_url,
+        headers={"Authorization": "Bearer " + OLLAMA_API_KEY}
+        if (OLLAMA_API_KEY := os.environ.get("OLLAMA_API_KEY"))
+        else None,
     )
 
 
@@ -136,6 +142,12 @@ def _get_agent_answer_ollama(
             if tool_call.function.name == "web_fetch":
                 url = tool_call.function.arguments.get("url", "")
                 logger.info(f"LLM fetching documentation URL: {url}")
+                if not OLLAMA_WEB_FETCH_SUPPORTED:
+                    raise NotImplementedError(
+                        "TODO: For now, you need to set OLLAMA_API_KEY for web search to work. "
+                    )
+                    # TODO: Fallback option, use something like httpx to fetch the page contents ourselves.
+
                 assert "localhost" not in url, (
                     "web_fetch is happening on the server-side. Can't fetch a locally-hosted page."
                 )
