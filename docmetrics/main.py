@@ -85,6 +85,7 @@ def evaluate_llm(
     with_docs: bool,
     model: str,
     docs_urls: list[str] | None = None,
+    docs_files: list[Path] | None = None,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
@@ -95,6 +96,7 @@ def evaluate_llm(
     with_docs: Whether to provide documentation URLs as context to the LLM.
     model: The name of the LLM model to use.
     docs_urls: A list of URLs to relevant documentation pages to provide as context.
+    docs_files: A list of local file paths whose content will be inlined into the prompt.
 
     Returns
     -------
@@ -115,6 +117,10 @@ def evaluate_llm(
     invalid_answers = 0
     answers: list[bool | None] = []
 
+    docs_content: str | None = None
+    if docs_files:
+        docs_content = "\n---\n".join(f.read_text() for f in docs_files)
+
     # TODO: Group questions based on the docs pages they require and use the batch API
     # to ask multiple questions at once with the same context.
 
@@ -125,8 +131,10 @@ def evaluate_llm(
             with_docs=with_docs,
             model=model,
             docs_urls=docs_urls,
+            docs_content=docs_content,
             # Adding this gives the LLM the ability to consult URLs given in the prompt.
-            tools=[types.Tool(url_context=types.UrlContext())] if with_docs else None,
+            # Not needed (or wanted) when docs are inlined via docs_files.
+            tools=[types.Tool(url_context=types.UrlContext())] if with_docs and not docs_files else None,
         )
         answers.append(result)
         if result is None:
@@ -152,6 +160,7 @@ def ask_question(
     model: str,
     docs_urls: list[str] | None,
     tools: list[types.Tool | Callable] | None,
+    docs_content: str | None = None,
 ) -> bool | None:
     """Asks a question to the LLM and returns whether the LLM answered correctly.
 
@@ -169,7 +178,7 @@ def ask_question(
     # there.
 
     assert client is not None
-    prompt = make_prompt(question, with_docs=with_docs, docs_urls=docs_urls)
+    prompt = make_prompt(question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content)
     logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     agent_answer = get_agent_answer(client, model, tools, prompt)
@@ -272,14 +281,20 @@ def parse_response_fallback(response_str: str) -> Response | None:
         return None
 
 
-def make_prompt(question: Question, with_docs: bool, docs_urls: list[str] | None = None) -> str:
+def make_prompt(
+    question: Question,
+    with_docs: bool,
+    docs_urls: list[str] | None = None,
+    docs_content: str | None = None,
+) -> str:
+    if with_docs and docs_content:
+        preamble = f"Based on the following documentation:\n\n{docs_content}\n\n"
+    elif with_docs and docs_urls:
+        preamble = "Based on this documentation: " + ", ".join(docs_urls) + ",\n"
+    else:
+        preamble = ""
     return (
-        (
-            ("Based on this documentation: " + ", ".join(docs_urls) + ",\n")
-            if with_docs and docs_urls
-            else ""
-        )
-        # + ((context + "\n\n") if context else "")
+        preamble
         + "Select the correct answer to the following question:\n"
         + f"{question.question}\n"
         + "\n".join(f"- {letter}: {answer}" for letter, answer in question.options.items())
@@ -300,6 +315,13 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         nargs="*",
         default=None,
         help="URLs to documentation pages that will be used as context for all questions.",
+    )
+    p.add_argument(
+        "--docs-file",
+        nargs="*",
+        type=Path,
+        default=None,
+        help="Local file paths whose content will be inlined into the prompt as documentation context.",
     )
     p.add_argument(
         "--output-format",
@@ -357,8 +379,11 @@ def main():
     questions = load_questions(questions_path=args.questions)
     model: str = args.model
     docs_urls: list[str] | None = args.docs_url if args.docs_url else None
-    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model, docs_urls=None)
-    score_with_docs = evaluate_llm(questions, with_docs=True, model=model, docs_urls=docs_urls)
+    docs_files: list[Path] | None = args.docs_file if args.docs_file else None
+    if docs_urls and docs_files:
+        parser.error("--docs-url and --docs-file are mutually exclusive.")
+    score_with_no_context = evaluate_llm(questions, with_docs=False, model=model)
+    score_with_docs = evaluate_llm(questions, with_docs=True, model=model, docs_urls=docs_urls, docs_files=docs_files)
 
     if args.output_format == "json":
         print(
