@@ -52,7 +52,7 @@ runs:
 
     - name: Install docmetrics
       shell: bash
-      run: pip install "${{ github.action_path }}"
+      run: pip install --force-reinstall "${{ github.action_path }}"
 
     - name: Run docmetrics on current branch
       id: run-current
