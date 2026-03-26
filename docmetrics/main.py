@@ -10,6 +10,8 @@ import warnings
 from pathlib import Path
 from typing import Callable, Literal
 
+import httpx
+
 import pydantic
 import rich.console
 import rich.logging
