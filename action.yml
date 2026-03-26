@@ -24,6 +24,11 @@ inputs:
       Google Gemini API key. Required for Gemini models; omit when using
       'test:dummy' or non-Gemini models.
     required: false
+  ollama-url:
+    description: >
+      Base URL of the Ollama server. Only used with 'ollama:' models.
+    required: false
+    default: http://localhost:11434
   github-token:
     description: GitHub token used to post the PR comment.
     required: false
@@ -58,6 +63,7 @@ runs:
         python -m docmetrics \
           --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
+          --ollama-url "${{ inputs.ollama-url }}" \
           ${{ inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '' }} \
           --output-format json \
           | tee /tmp/docmetrics-current.json
@@ -102,6 +108,7 @@ runs:
         python -m docmetrics \
           --questions /tmp/base-questions.yaml \
           --model "${{ inputs.model }}" \
+          --ollama-url "${{ inputs.ollama-url }}" \
           ${{ inputs.base-docs-url && format('--docs-url {0}', inputs.base-docs-url) || (inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '') }} \
           --output-format json \
           | tee /tmp/docmetrics-base.json

@@ -99,7 +99,7 @@ jobs:
 
   test-docmetrics-docs:
     name: Test DocMetrics docs with the action
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [test-action]
     steps:
       - uses: actions/checkout@v4
@@ -118,15 +118,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Build PR documentation
-        run: uv run mkdocs build
-
       - name: Serve PR docs in background
         run: |
-          cd site
-          python -m http.server 8000 &
+          uv run mkdocs serve &
           echo $! > /tmp/docs_server.pid
-          cd ..
 
       - name: Wait for docs server to be ready
         run: |
@@ -147,8 +142,8 @@ jobs:
           questions-file: sample_questions.yaml
           docs-url: http://localhost:8000
           base-docs-url: https://mila-iqia.github.io/docmetrics
-          model: gemini-2.5-flash
-          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          model: ollama:gpt-oss:120b
+          ollama-url: http://dgx:11434
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stop docs server
