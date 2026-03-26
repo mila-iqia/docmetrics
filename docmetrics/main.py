@@ -258,10 +258,12 @@ def evaluate_llm(
     # TODO: Group questions based on the docs pages they require and use the batch API
     # to ask multiple questions at once with the same context.
 
-    for question in questions:
+    for question_index, question in enumerate(questions, 1):
         result = ask_question(
             client=client,
             question=question,
+            question_index=question_index,
+            num_questions=num_questions,
             with_docs=with_docs,
             model=model,
             docs_urls=docs_urls,
@@ -301,32 +303,35 @@ def ask_question(
     tools: list[types.Tool | Callable] | None,
     docs_content: str | None = None,
     ollama_url: str = OLLAMA_DEFAULT_URL,
+    question_index: int | None = None,
+    num_questions: int | None = None,
 ) -> bool | None:
     """Asks a question to the LLM and returns whether the LLM answered correctly.
 
     Returns None if the LLM's answer was invalid.
     """
+    q_prefix = f"Question {question_index}/{num_questions}: " if question_index is not None and num_questions is not None else ""
     if model == DUMMY_MODEL:
         dummy_answer = random.choice(list(question.options.keys()))
-        logger.info(f"Correct answer: {question.answer}, dummy answer: {dummy_answer}")
+        logger.info(f"{q_prefix}Correct answer: {question.answer}, dummy answer: {dummy_answer}")
         return dummy_answer == question.answer
 
     if _is_ollama_model(model):
         prompt = make_prompt(
             question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
         )
-        logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
+        logger.debug(f"{q_prefix}Prompt sent to LLM: [magenta]{prompt}")
         # Use web_fetch tool when docs are given as URLs (not already inlined via --docs-file).
         use_web_fetch = with_docs and bool(docs_urls) and docs_content is None
         agent_answer = _get_agent_answer_ollama(
             model, prompt, ollama_url, use_web_fetch=use_web_fetch
         )
         if not agent_answer:
-            logger.error("LLM's answer couldn't be parsed!")
+            logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
             return None
-        logger.info(f"Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
+        logger.info(f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
         if agent_answer.justification:
-            logger.debug(f"LLM's justification: {agent_answer.justification}")
+            logger.debug(f"{q_prefix}LLM's justification: {agent_answer.justification}")
         return agent_answer.answer == question.answer
 
     # TODO: For a lot of the models available through Google AI Studio, they can't
@@ -339,16 +344,16 @@ def ask_question(
     prompt = make_prompt(
         question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
     )
-    logger.debug(f"Prompt sent to LLM: [magenta]{prompt}")
+    logger.debug(f"{q_prefix}Prompt sent to LLM: [magenta]{prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     agent_answer = get_agent_answer(client, model, tools, prompt)
     if not agent_answer:
-        logger.error("LLM's answer couldn't be parsed!")
+        logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
         return None
     # correct_answer = question.options[question.answer]
-    logger.info(f"Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
+    logger.info(f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
     if agent_answer.justification:
-        logger.debug(f"LLM's justification: {agent_answer.justification}")
+        logger.debug(f"{q_prefix}LLM's justification: {agent_answer.justification}")
     return agent_answer.answer == question.answer
 
 
