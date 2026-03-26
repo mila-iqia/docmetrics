@@ -84,9 +84,6 @@ def _ollama_model_name(model: str) -> str:
     return model.removeprefix(OLLAMA_PREFIX)
 
 
-OLLAMA_WEB_FETCH_SUPPORTED = "OLLAMA_API_KEY" in os.environ
-
-
 @functools.cache
 def _get_ollama_client(base_url: str = OLLAMA_DEFAULT_URL):
     load_dotenv()  # read the OLLAMA_API_KEY from the .env file if present.
@@ -100,13 +97,49 @@ def _get_ollama_client(base_url: str = OLLAMA_DEFAULT_URL):
     )
 
 
+def _is_local_url(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    return urlparse(url).hostname in ("localhost", "127.0.0.1", "::1")
+
+
+def _fetch_url(url: str) -> str:
+    """Fetch URL content via httpx, stripping HTML tags if the response is HTML."""
+    response = httpx.get(url, follow_redirects=True, timeout=30)
+    response.raise_for_status()
+    if "html" not in response.headers.get("content-type", ""):
+        return response.text
+    from html.parser import HTMLParser
+
+    class _Extractor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self._parts: list[str] = []
+            self._skip = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style"):
+                self._skip = True
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style"):
+                self._skip = False
+
+        def handle_data(self, data):
+            if not self._skip and (stripped := data.strip()):
+                self._parts.append(stripped)
+
+    ex = _Extractor()
+    ex.feed(response.text)
+    return "\n".join(ex._parts)
+
+
 def _get_agent_answer_ollama(
     model: str,
     prompt: str,
     ollama_url: str = OLLAMA_DEFAULT_URL,
     use_web_fetch: bool = False,
 ) -> "Response | None":
-    import ollama as ollama_lib
 
     client = _get_ollama_client(ollama_url)
     ollama_model = _ollama_model_name(model)
@@ -118,7 +151,7 @@ def _get_agent_answer_ollama(
     )
 
     messages: list = [{"role": "user", "content": full_prompt}]
-    tools = [ollama_lib.web_fetch] if use_web_fetch else None
+    tools = [client.web_fetch] if use_web_fetch else None
 
     while True:
         response = client.chat(
@@ -142,18 +175,12 @@ def _get_agent_answer_ollama(
             if tool_call.function.name == "web_fetch":
                 url = tool_call.function.arguments.get("url", "")
                 logger.info(f"LLM fetching documentation URL: {url}")
-                if not OLLAMA_WEB_FETCH_SUPPORTED:
-                    raise NotImplementedError(
-                        "TODO: For now, you need to set OLLAMA_API_KEY for web search to work. "
-                    )
-                    # TODO: Fallback option, use something like httpx to fetch the page contents ourselves.
-
-                assert "localhost" not in url, (
-                    "web_fetch is happening on the server-side. Can't fetch a locally-hosted page."
-                )
+                use_ollama_fetch = bool(os.environ.get("OLLAMA_API_KEY")) and not _is_local_url(url)
                 try:
-                    result = client.web_fetch(**tool_call.function.arguments)
-                    content = str(result)
+                    if use_ollama_fetch:
+                        content = str(client.web_fetch(**tool_call.function.arguments))
+                    else:
+                        content = _fetch_url(url)
                 except Exception as e:
                     logger.warning(f"web_fetch failed for {url}: {e}")
                     content = f"Error fetching URL: {e}"
@@ -221,6 +248,10 @@ def evaluate_llm(
     docs_content: str | None = None
     if docs_files:
         docs_content = "\n---\n".join(f.read_text() for f in docs_files)
+    elif with_docs and docs_urls and not _is_ollama_model(model) and any(_is_local_url(u) for u in docs_urls):
+        # Google's url_context tool runs server-side and can't reach localhost URLs; pre-fetch them.
+        logger.info(f"Pre-fetching {len(docs_urls)} documentation URL(s) (localhost detected)...")
+        docs_content = "\n---\n".join(_fetch_url(u) for u in docs_urls)
 
     # TODO: Group questions based on the docs pages they require and use the batch API
     # to ask multiple questions at once with the same context.
@@ -235,10 +266,10 @@ def evaluate_llm(
             docs_content=docs_content,
             ollama_url=ollama_url,
             # Adding this gives the LLM the ability to consult URLs given in the prompt.
-            # Not needed (or wanted) when docs are inlined via docs_files or for Ollama models.
+            # Not needed (or wanted) when docs are already inlined or for Ollama models.
             tools=(
                 [types.Tool(url_context=types.UrlContext())]
-                if with_docs and not docs_files and not _is_ollama_model(model)
+                if with_docs and docs_content is None and not _is_ollama_model(model)
                 else None
             ),
         )
