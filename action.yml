@@ -33,6 +33,14 @@ inputs:
     description: GitHub token used to post the PR comment.
     required: false
     default: ${{ github.token }}
+  post-comment:
+    description: >
+      Whether to post a PR comment with the results. Set to 'false' when using
+      the workflow_run pattern for fork PRs — upload the docmetrics-* workspace
+      files as an artifact instead, then call the post-pr-comment reusable
+      workflow from a workflow_run trigger.
+    required: false
+    default: 'true'
 
 outputs:
   score-with-docs:
@@ -136,8 +144,47 @@ runs:
             out.write(f"score-without-docs={d['without_docs']['score']}\n")
         EOF
 
-    - name: Post PR comment
+    - name: Write PR comment artifacts
       if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        QUESTIONS_FILE: ${{ inputs.questions-file }}
+        MODEL: ${{ inputs.model }}
+        BASE_REF: ${{ github.base_ref }}
+        CACHE_HIT: ${{ steps.cache-restore.outputs.cache-hit }}
+      run: |
+        python3 - <<'PYEOF'
+        import json, os
+        cache_hit = os.environ.get("CACHE_HIT", "") == "true"
+        has_base = os.path.exists("/tmp/docmetrics-base.json")
+        if cache_hit:
+            base_source = "cached"
+        elif has_base:
+            base_source = "computed"
+        else:
+            base_source = None
+        metadata = {
+            "pr_number": int(os.environ["PR_NUMBER"]),
+            "base_source": base_source,
+            "questions_file": os.environ["QUESTIONS_FILE"],
+            "model": os.environ["MODEL"],
+            "base_ref": os.environ["BASE_REF"],
+        }
+        workspace = os.environ["GITHUB_WORKSPACE"]
+        with open(os.path.join(workspace, "docmetrics-metadata.json"), "w") as f:
+            json.dump(metadata, f)
+        PYEOF
+
+        cp /tmp/docmetrics-current.json "$GITHUB_WORKSPACE/docmetrics-current.json"
+        if [ -f /tmp/docmetrics-base.json ]; then
+          cp /tmp/docmetrics-base.json "$GITHUB_WORKSPACE/docmetrics-base.json"
+        fi
+        cp "${{ github.action_path }}/.github/scripts/format_comment.py" \
+           "$GITHUB_WORKSPACE/docmetrics-format_comment.py"
+
+    - name: Post PR comment
+      if: github.event_name == 'pull_request' && inputs.post-comment == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}

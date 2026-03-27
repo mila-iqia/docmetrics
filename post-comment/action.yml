@@ -1,0 +1,71 @@
+name: DocMetrics Post PR Comment
+description: >
+  Post (or update) a DocMetrics results comment on a pull request.
+  Intended for use after downloading the docmetrics artifact bundle produced
+  by the main DocMetrics action when run with post-comment: 'false'.
+
+inputs:
+  current-json:
+    description: Path to the current branch docmetrics results JSON.
+    required: true
+  base-json:
+    description: Path to the base branch docmetrics results JSON (optional).
+    required: false
+    default: ''
+  metadata-json:
+    description: >
+      Path to docmetrics-metadata.json, which contains pr_number, base_source,
+      questions_file, model, and base_ref.
+    required: true
+  github-token:
+    description: GitHub token used to post the PR comment.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Post PR comment
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        CURRENT_JSON: ${{ inputs.current-json }}
+        BASE_JSON: ${{ inputs.base-json }}
+        METADATA_JSON: ${{ inputs.metadata-json }}
+      run: |
+        PR_NUMBER=$(python3 -c "import json; print(json.load(open('$METADATA_JSON'))['pr_number'])")
+        BASE_SOURCE=$(python3 -c "import json; print(json.load(open('$METADATA_JSON')).get('base_source') or '')")
+        QUESTIONS_FILE=$(python3 -c "import json; print(json.load(open('$METADATA_JSON'))['questions_file'])")
+        MODEL=$(python3 -c "import json; print(json.load(open('$METADATA_JSON'))['model'])")
+        BASE_REF=$(python3 -c "import json; print(json.load(open('$METADATA_JSON'))['base_ref'])")
+        REPO="${{ github.repository }}"
+
+        BASE_ARGS=""
+        if [ -n "$BASE_JSON" ] && [ -f "$BASE_JSON" ]; then
+          BASE_ARGS="--base $BASE_JSON"
+          if [ -n "$BASE_SOURCE" ]; then
+            BASE_ARGS="$BASE_ARGS --base-source $BASE_SOURCE"
+          fi
+        fi
+
+        python3 "${{ github.action_path }}/../.github/scripts/format_comment.py" \
+          --current "$CURRENT_JSON" \
+          $BASE_ARGS \
+          --questions-file "$QUESTIONS_FILE" \
+          --model "$MODEL" \
+          --base-ref "$BASE_REF" \
+          > /tmp/docmetrics-comment.md
+
+        EXISTING_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+          --jq '.[] | select(.body | contains("<!-- docmetrics -->")) | .id' \
+          | head -1)
+
+        if [ -n "$EXISTING_ID" ]; then
+          gh api --method PATCH \
+            "repos/$REPO/issues/comments/$EXISTING_ID" \
+            -f body="$(cat /tmp/docmetrics-comment.md)"
+        else
+          gh api --method POST \
+            "repos/$REPO/issues/$PR_NUMBER/comments" \
+            -f body="$(cat /tmp/docmetrics-comment.md)"
+        fi
