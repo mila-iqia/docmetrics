@@ -74,7 +74,7 @@ class QuestionResult:
     """The correct answer letter."""
 
     runs: tuple[Letter | None, ...]
-    """One selected letter per candidate run (None = unparseable response)."""
+    """One selected letter per candidate run (None = unparsable response)."""
 
     @property
     def correct_count(self) -> int:
@@ -357,7 +357,7 @@ def ask_question(
     candidate_index: int | None = None,
     num_candidates: int | None = None,
 ) -> Letter | None:
-    """Asks a question to the LLM and returns the selected answer letter, or None if unparseable."""
+    """Asks a question to the LLM and returns the selected answer letter, or None if unparsable."""
     q_prefix = f"Question {question_index}/{num_questions}: " if question_index is not None and num_questions is not None else ""
     if candidate_index is not None and num_candidates is not None:
         q_prefix += f"[candidate {candidate_index + 1}/{num_candidates}] "
