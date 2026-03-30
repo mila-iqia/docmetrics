@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 
 
-def fmt_score(score: float, correct: int, total: int) -> str:
-    return f"{score:.0%} ({correct}/{total})"
+def fmt_score(score: float, correct: int, total: int, score_std: float | None = None) -> str:
+    s = f"{score:.0%} ({correct}/{total})"
+    if score_std is not None:
+        s += f" ±{score_std:.0%}"
+    return s
 
 
 def fmt_delta(current: float, base: float) -> str:
@@ -16,12 +19,32 @@ def fmt_delta(current: float, base: float) -> str:
     return f"{sign}{delta_pp}pp"
 
 
-def result_icon(r: bool | None) -> str:
-    if r is True:
+def result_icon(a: "dict | bool | None") -> str:
+    if isinstance(a, dict):
+        if "pass_rate" in a:
+            selected = a.get("selected", [])
+            n = len(selected)
+            correct = round(a["pass_rate"] * n)
+            if correct == n:
+                return "✅"
+            if correct == 0:
+                return "❌"
+            return f"🔄 {correct}/{n}"
+        a = a.get("correct")
+    if a is True:
         return "✅"
-    if r is False:
+    if a is False:
         return "❌"
     return "❓"
+
+
+def _answer_score(a: "dict | bool | None") -> "bool | float | None":
+    """Extract a comparable correctness score from an answer entry."""
+    if isinstance(a, dict):
+        if "pass_rate" in a:
+            return a["pass_rate"]
+        return a.get("correct")
+    return a
 
 
 def question_label(questions: list | None, i: int, max_len: int = 80) -> str:
@@ -77,8 +100,8 @@ def format_comment(
         "| | Without docs | With docs | Δ&nbsp;(docs&nbsp;−&nbsp;no&nbsp;docs) |",
         "|:---|:---:|:---:|:---:|",
         f"| **This PR**"
-        f" | {fmt_score(cur_no['score'], cur_no['correct_answers'], cur_no['num_questions'])}"
-        f" | {fmt_score(cur_wi['score'], cur_wi['correct_answers'], cur_wi['num_questions'])}"
+        f" | {fmt_score(cur_no['score'], cur_no['correct_answers'], cur_no['num_questions'], cur_no.get('score_std'))}"
+        f" | {fmt_score(cur_wi['score'], cur_wi['correct_answers'], cur_wi['num_questions'], cur_wi.get('score_std'))}"
         f" | {fmt_delta(cur_wi['score'], cur_no['score'])} |",
     ]
 
@@ -115,7 +138,7 @@ def format_comment(
             for i, (b_no, c_no, b_wi, c_wi) in enumerate(
                 zip(base_no_answers, cur_no_answers, base_wi_answers, cur_wi_answers)
             )
-            if b_no != c_no or b_wi != c_wi
+            if _answer_score(b_no) != _answer_score(c_no) or _answer_score(b_wi) != _answer_score(c_wi)
         ]
         if changed:
             lines += [

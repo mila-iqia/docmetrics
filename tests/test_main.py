@@ -10,6 +10,7 @@ from docmetrics.main import (
     EvaluationResult,
     Letter,
     Question,
+    QuestionResult,
     Response,
     ask_question,
     evaluate_llm,
@@ -142,19 +143,17 @@ def test_get_agent_answer_with_url_metadata():
 
 
 def test_ask_question_correct():
-    """Returns True when the LLM answers correctly."""
+    """Returns the correct letter when the LLM answers correctly."""
     q = QUESTIONS[0]  # answer is "A"
-    assert (
-        ask_question(mock_client("A"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is True
-    )
+    result = ask_question(mock_client("A"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None)
+    assert result == "A"
 
 
 def test_ask_question_incorrect():
-    """Returns False when the LLM answers incorrectly."""
+    """Returns the selected letter (not the correct one) when the LLM answers incorrectly."""
     q = QUESTIONS[0]  # answer is "A"
-    assert (
-        ask_question(mock_client("B"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is False
-    )
+    result = ask_question(mock_client("B"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None)
+    assert result == "B"
 
 
 def test_ask_question_invalid():
@@ -193,6 +192,8 @@ def test_evaluate_llm_score():
     assert result.num_questions == len(QUESTIONS)
     assert result.correct_answers == expected_correct
     assert result.invalid_answers == 0
+    assert all(isinstance(qr, QuestionResult) for qr in result.answers)
+    assert all(len(qr.runs) == 1 for qr in result.answers)
 
 
 def test_evaluate_llm_with_docs_adds_url_tool():
@@ -221,7 +222,26 @@ def test_evaluate_llm_dummy_model():
     assert result.invalid_answers == 0
     assert result.correct_answers <= result.num_questions
     assert len(result.answers) == len(QUESTIONS)
-    assert all(isinstance(a, bool) for a in result.answers)
+    assert all(isinstance(qr, QuestionResult) for qr in result.answers)
+    assert all(qr.runs[0] in qr.expected or qr.runs[0] != qr.expected for qr in result.answers)
+
+
+def test_evaluate_llm_num_candidates():
+    """With num_candidates=N, each QuestionResult has N runs."""
+    n = 3
+    answers: list[Letter] = ["A", "B", "A", "C", "B", "B", "A", "C", "B"]  # 3 per question
+    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+        client = MagicMock()
+        mock_factory.return_value = client
+        client.models.generate_content.side_effect = [make_fake_response(a) for a in answers]
+
+        result = evaluate_llm(QUESTIONS, with_docs=False, model="fake-model", num_candidates=n)
+
+    assert result.num_candidates == n
+    assert all(len(qr.runs) == n for qr in result.answers)
+    assert result.correct_answers == sum(
+        sum(1 for run in qr.runs if run == qr.expected) for qr in result.answers
+    )
 
 
 def test_evaluate_llm_dummy_model_with_docs():

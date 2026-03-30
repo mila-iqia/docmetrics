@@ -3,6 +3,7 @@ import dataclasses
 import functools
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -37,6 +38,7 @@ __all__ = [
     "load_questions",
     "Question",
     "Response",
+    "QuestionResult",
     "EvaluationResult",
 ]
 
@@ -64,6 +66,61 @@ class Response(pydantic.BaseModel):
     # Seems like it might just be extra tokens to generate, for our purposes.
     justification: str = ""
     """A brief justification for the selected answer."""
+
+
+@dataclasses.dataclass(frozen=True)
+class QuestionResult:
+    expected: Letter
+    """The correct answer letter."""
+
+    runs: tuple[Letter | None, ...]
+    """One selected letter per candidate run (None = unparseable response)."""
+
+    @property
+    def correct_count(self) -> int:
+        return sum(1 for r in self.runs if r == self.expected)
+
+    @property
+    def pass_rate(self) -> float:
+        return self.correct_count / len(self.runs) if self.runs else 0.0
+
+
+@dataclasses.dataclass(frozen=True)
+class EvaluationResult:
+    answers: tuple[QuestionResult, ...]
+    """Per-question results."""
+
+    num_candidates: int = 1
+    """Number of candidate answers requested per question."""
+
+    @property
+    def num_questions(self) -> int:
+        return len(self.answers)
+
+    @property
+    def correct_answers(self) -> int:
+        return sum(r.correct_count for r in self.answers)
+
+    @property
+    def invalid_answers(self) -> int:
+        return sum(1 for r in self.answers for run in r.runs if run is None)
+
+    @property
+    def score(self) -> float:
+        """Mean per-question pass rate."""
+        if not self.answers:
+            return 0.0
+        return sum(r.pass_rate for r in self.answers) / len(self.answers)
+
+    @property
+    def score_std(self) -> float:
+        """Population std-dev of per-question pass rates."""
+        if not self.answers:
+            return 0.0
+        rates = [r.pass_rate for r in self.answers]
+        mean = sum(rates) / len(rates)
+        variance = sum((r - mean) ** 2 for r in rates) / len(rates)
+        return math.sqrt(variance)
 
 
 @functools.cache
@@ -208,20 +265,6 @@ def _get_agent_answer_ollama(
             )
 
 
-@dataclasses.dataclass(frozen=True)
-class EvaluationResult:
-    num_questions: int
-    correct_answers: int
-    invalid_answers: int
-    answers: tuple[bool | None, ...] = ()
-    """Per-question results: True = correct, False = incorrect, None = invalid."""
-
-    @property
-    def score(self) -> float:
-        """The percentage of questions that the LLM answered correctly."""
-        return self.correct_answers / self.num_questions if self.num_questions > 0 else 0.0
-
-
 def evaluate_llm(
     questions: list[Question],
     with_docs: bool,
@@ -229,6 +272,7 @@ def evaluate_llm(
     docs_urls: list[str] | None = None,
     docs_files: list[Path] | None = None,
     ollama_url: str = OLLAMA_DEFAULT_URL,
+    num_candidates: int = 1,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
@@ -241,6 +285,7 @@ def evaluate_llm(
     docs_urls: A list of URLs to relevant documentation pages to provide as context.
     docs_files: A list of local file paths whose content will be inlined into the prompt.
     ollama_url: Base URL of the Ollama server (only used when model has the 'ollama:' prefix).
+    num_candidates: Number of times to ask each question. Scores are averaged across candidates.
 
     Returns
     -------
@@ -251,15 +296,7 @@ def evaluate_llm(
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
     client = None if model == DUMMY_MODEL or _is_ollama_model(model) else get_google_genai_client()
-    # for model_config in client.models.list().page:
-    #     if model_config.supported_actions and "generateContent" in model_config.supported_actions:
-    #         logger.info(f"Available model: {model_config.name}")
-    #         logger.debug(f"Model config: {model_config}")
-    # exit()
     num_questions = len(questions)
-    correct_answers = 0
-    invalid_answers = 0
-    answers: list[bool | None] = []
 
     docs_content: str | None = None
     if docs_files:
@@ -272,36 +309,34 @@ def evaluate_llm(
     # TODO: Group questions based on the docs pages they require and use the batch API
     # to ask multiple questions at once with the same context.
 
+    answer_results: list[QuestionResult] = []
     for question_index, question in enumerate(questions, 1):
-        result = ask_question(
-            client=client,
-            question=question,
-            question_index=question_index,
-            num_questions=num_questions,
-            with_docs=with_docs,
-            model=model,
-            docs_urls=docs_urls,
-            docs_content=docs_content,
-            ollama_url=ollama_url,
-            # Adding this gives the LLM the ability to consult URLs given in the prompt.
-            # Not needed (or wanted) when docs are already inlined or for Ollama models.
-            tools=(
-                [types.Tool(url_context=types.UrlContext())]
-                if with_docs and docs_content is None and not _is_ollama_model(model)
-                else None
-            ),
-        )
-        answers.append(result)
-        if result is None:
-            invalid_answers += 1
-        else:
-            correct_answers += int(result)
-    return EvaluationResult(
-        num_questions=num_questions,
-        correct_answers=correct_answers,
-        invalid_answers=invalid_answers,
-        answers=tuple(answers),
-    )
+        runs: list[Letter | None] = []
+        for candidate_index in range(num_candidates):
+            selected = ask_question(
+                client=client,
+                question=question,
+                question_index=question_index,
+                num_questions=num_questions,
+                candidate_index=candidate_index if num_candidates > 1 else None,
+                num_candidates=num_candidates if num_candidates > 1 else None,
+                with_docs=with_docs,
+                model=model,
+                docs_urls=docs_urls,
+                docs_content=docs_content,
+                ollama_url=ollama_url,
+                # Adding this gives the LLM the ability to consult URLs given in the prompt.
+                # Not needed (or wanted) when docs are already inlined or for Ollama models.
+                tools=(
+                    [types.Tool(url_context=types.UrlContext())]
+                    if with_docs and docs_content is None and not _is_ollama_model(model)
+                    else None
+                ),
+            )
+            runs.append(selected)
+        answer_results.append(QuestionResult(expected=question.answer, runs=tuple(runs)))
+
+    return EvaluationResult(answers=tuple(answer_results), num_candidates=num_candidates)
 
 
 def load_questions(questions_path: Path) -> list[Question]:
@@ -319,16 +354,18 @@ def ask_question(
     ollama_url: str = OLLAMA_DEFAULT_URL,
     question_index: int | None = None,
     num_questions: int | None = None,
-) -> bool | None:
-    """Asks a question to the LLM and returns whether the LLM answered correctly.
-
-    Returns None if the LLM's answer was invalid.
-    """
+    candidate_index: int | None = None,
+    num_candidates: int | None = None,
+) -> Letter | None:
+    """Asks a question to the LLM and returns the selected answer letter, or None if unparseable."""
     q_prefix = f"Question {question_index}/{num_questions}: " if question_index is not None and num_questions is not None else ""
+    if candidate_index is not None and num_candidates is not None:
+        q_prefix += f"[candidate {candidate_index + 1}/{num_candidates}] "
+
     if model == DUMMY_MODEL:
         dummy_answer = random.choice(list(question.options.keys()))
         logger.info(f"{q_prefix}Correct answer: {question.answer}, dummy answer: {dummy_answer}")
-        return dummy_answer == question.answer
+        return dummy_answer
 
     if _is_ollama_model(model):
         prompt = make_prompt(
@@ -346,7 +383,7 @@ def ask_question(
         logger.info(f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
         if agent_answer.justification:
             logger.debug(f"{q_prefix}LLM's justification: {agent_answer.justification}")
-        return agent_answer.answer == question.answer
+        return agent_answer.answer
 
     # TODO: For a lot of the models available through Google AI Studio, they can't
     # use tools to fetch the docs content. It *might* be worthwhile to actually fetch,
@@ -364,11 +401,10 @@ def ask_question(
     if not agent_answer:
         logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
         return None
-    # correct_answer = question.options[question.answer]
     logger.info(f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
     if agent_answer.justification:
         logger.debug(f"{q_prefix}LLM's justification: {agent_answer.justification}")
-    return agent_answer.answer == question.answer
+    return agent_answer.answer
 
 
 def get_agent_answer(
@@ -397,10 +433,6 @@ def get_agent_answer(
             f"Response contained {len(api_response.candidates)} candidates, but only the first one will be used!"
         )
     for candidate in api_response.candidates:
-        # todo: look into this maybe?
-        # logger.debug(
-        #     f"Grounding metadata for candidate {candidate.index}: {candidate.grounding_metadata}"
-        # )
         if (consulted_urls := candidate.url_context_metadata) and consulted_urls.url_metadata:
             logger.info(
                 f"The LLM consulted {len(consulted_urls.url_metadata)} web pages to answer the question."
@@ -481,6 +513,39 @@ def make_prompt(
     )
 
 
+def _serialize_evaluation_result(result: EvaluationResult) -> dict:
+    answers_out = []
+    for qr in result.answers:
+        if result.num_candidates == 1:
+            selected = qr.runs[0] if qr.runs else None
+            answers_out.append(
+                {
+                    "expected": qr.expected,
+                    "selected": selected,
+                    "correct": (selected == qr.expected) if selected is not None else None,
+                }
+            )
+        else:
+            answers_out.append(
+                {
+                    "expected": qr.expected,
+                    "pass_rate": qr.pass_rate,
+                    "selected": list(qr.runs),
+                }
+            )
+    out: dict = {
+        "num_questions": result.num_questions,
+        "correct_answers": result.correct_answers,
+        "invalid_answers": result.invalid_answers,
+        "score": result.score,
+        "answers": answers_out,
+    }
+    if result.num_candidates > 1:
+        out["num_candidates"] = result.num_candidates
+        out["score_std"] = result.score_std
+    return out
+
+
 def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = True) -> None:
     p.add_argument("--questions", type=Path, required=questions_required)
     p.add_argument(
@@ -507,6 +572,13 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         type=str,
         default=OLLAMA_DEFAULT_URL,
         help=f"Base URL of the Ollama server (default: {OLLAMA_DEFAULT_URL}). Only used with 'ollama:' models.",
+    )
+    p.add_argument(
+        "--num-candidates",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of times to ask each question. Scores are averaged across candidates. (default: 1)",
     )
     p.add_argument(
         "--output-format",
@@ -568,10 +640,11 @@ def main():
     docs_urls: list[str] | None = args.docs_url if args.docs_url else None
     docs_files: list[Path] | None = args.docs_file if args.docs_file else None
     ollama_url: str = args.ollama_url
+    num_candidates: int = args.num_candidates
     if docs_urls and docs_files:
         parser.error("--docs-url and --docs-file are mutually exclusive.")
     score_with_no_context = evaluate_llm(
-        questions, with_docs=False, model=model, ollama_url=ollama_url
+        questions, with_docs=False, model=model, ollama_url=ollama_url, num_candidates=num_candidates
     )
     score_with_docs = evaluate_llm(
         questions,
@@ -580,6 +653,7 @@ def main():
         docs_urls=docs_urls,
         docs_files=docs_files,
         ollama_url=ollama_url,
+        num_candidates=num_candidates,
     )
 
     if args.output_format == "json":
@@ -587,20 +661,8 @@ def main():
             json.dumps(
                 {
                     "questions": [{"question": q.question} for q in questions],
-                    "without_docs": {
-                        "num_questions": score_with_no_context.num_questions,
-                        "correct_answers": score_with_no_context.correct_answers,
-                        "invalid_answers": score_with_no_context.invalid_answers,
-                        "score": score_with_no_context.score,
-                        "answers": list(score_with_no_context.answers),
-                    },
-                    "with_docs": {
-                        "num_questions": score_with_docs.num_questions,
-                        "correct_answers": score_with_docs.correct_answers,
-                        "invalid_answers": score_with_docs.invalid_answers,
-                        "score": score_with_docs.score,
-                        "answers": list(score_with_docs.answers),
-                    },
+                    "without_docs": _serialize_evaluation_result(score_with_no_context),
+                    "with_docs": _serialize_evaluation_result(score_with_docs),
                 }
             )
         )
