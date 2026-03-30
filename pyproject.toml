@@ -32,6 +32,9 @@ dev = [
 testpaths = ["docmetrics", "tests"]
 norecursedirs = [".venv"]
 addopts = ["--doctest-modules"]
+markers = [
+    "integration: requires a live Ollama instance (set DOCMETRICS_INTEGRATION_TEST=1 to run)",
+]
 filterwarnings = [
     "ignore:'_UnionGenericAlias' is deprecated and slated for removal in Python 3.17:DeprecationWarning:google.genai.types:",
 ]

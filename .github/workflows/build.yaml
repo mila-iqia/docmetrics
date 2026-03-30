@@ -153,6 +153,33 @@ jobs:
             kill $(cat /tmp/docs_server.pid) || true
           fi
 
+  integration-test-mila-docs:
+    name: Integration test — Mila docs quiz
+    runs-on: self-hosted
+    needs: [test-docmetrics-docs]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-suffix: "3.14"
+
+      - name: Pin Python version
+        run: uv python pin 3.14
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Mila docs integration test
+        run: uv run pytest tests/test_integration.py -v -s
+        env:
+          DOCMETRICS_INTEGRATION_TEST: "1"
+          OLLAMA_URL: http://dgx:11434
+
   # https://about.codecov.io/blog/uploading-code-coverage-in-a-separate-job-on-github-actions/
   upload-coverage-codecov:
     needs: [unit_tests]
