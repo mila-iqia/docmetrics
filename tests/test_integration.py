@@ -39,7 +39,10 @@ def test_benchmark_time_taken():
         num_candidates=3,
     )
     time_taken_no_docs = time.time() - t_start
-    print(f"Time taken for {n_questions} questions: {time_taken_no_docs:.1f} seconds")
+    print(
+        f"Time taken for {n_questions} questions x 3 candidates per question: {time_taken_no_docs:.1f} seconds"
+    )
+    print(f"Time per question-candidate: {time_taken_no_docs / (n_questions * 3):.1f} seconds")
     print(f"Result: {result}")
 
 
