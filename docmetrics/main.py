@@ -30,6 +30,8 @@ DUMMY_MODEL = "test:dummy"
 """A model name that returns a random answer without calling any external API."""
 OLLAMA_PREFIX = "ollama:"
 """Prefix for Ollama model names, e.g. 'ollama:qwen3-coder-next:latest'."""
+MAX_TOOL_CALLS = 5
+"""Maximum number of tool calls allowed per question before giving up."""
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
 """Default base URL for the Ollama server."""
 __all__ = [
@@ -222,13 +224,20 @@ def _get_agent_answer_ollama(
     messages: list = [{"role": "user", "content": full_prompt}]
     tools = [client.web_fetch] if use_web_fetch else None
 
+    import ollama as _ollama
+
+    tool_call_count = 0
     while True:
-        response = client.chat(
-            model=ollama_model,
-            messages=messages,
-            tools=tools,
-            format="json" if not tools else None,
-        )
+        try:
+            response = client.chat(
+                model=ollama_model,
+                messages=messages,
+                tools=tools,
+                format="json" if not tools else None,
+            )
+        except _ollama.ResponseError as e:
+            logger.warning(f"Ollama returned an error (invalid tool call?): {e}")
+            return None
         messages.append(response.message)
 
         if not response.message.tool_calls:
@@ -239,6 +248,11 @@ def _get_agent_answer_ollama(
                 return Response.model_validate_json(content)
             except pydantic.ValidationError:
                 return parse_response_fallback(content)
+
+        tool_call_count += len(response.message.tool_calls)
+        if tool_call_count > MAX_TOOL_CALLS:
+            logger.warning(f"Exceeded maximum tool calls ({MAX_TOOL_CALLS}), giving up.")
+            return None
 
         for tool_call in response.message.tool_calls:
             if tool_call.function.name == "web_fetch":
