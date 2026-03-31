@@ -25,6 +25,25 @@ integration = pytest.mark.skipif(
 
 
 @integration
+def test_benchmark_time_taken():
+    """Mila docs quiz: with-docs score should exceed without-docs score."""
+    questions = load_questions(MILA_QUESTIONS_FILE)
+    questions = questions[:10]
+    t_start = time.time()
+    n_questions = len(questions)
+    result = evaluate_llm(
+        questions,
+        with_docs=False,
+        model=MODEL,
+        ollama_url=OLLAMA_URL,
+        num_candidates=3,
+    )
+    time_taken_no_docs = time.time() - t_start
+    print(f"Time taken for {n_questions} questions: {time_taken_no_docs:.1f} seconds")
+    print(f"Result: {result}")
+
+
+@integration
 def test_mila_docs_quiz_with_ollama():
     """Mila docs quiz: with-docs score should exceed without-docs score."""
     questions = load_questions(MILA_QUESTIONS_FILE)
