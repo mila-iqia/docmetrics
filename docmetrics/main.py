@@ -251,8 +251,36 @@ def _get_agent_answer_ollama(
 
         tool_call_count += len(response.message.tool_calls)
         if tool_call_count > MAX_TOOL_CALLS:
-            logger.warning(f"Exceeded maximum tool calls ({MAX_TOOL_CALLS}), giving up.")
-            return None
+            logger.warning(
+                f"Exceeded maximum tool calls ({MAX_TOOL_CALLS}), asking for a final answer."
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "You have reached the maximum number of tool calls. "
+                        "Based on the information gathered so far, please provide your final answer now. "
+                        f"Respond with a JSON object matching this schema: {json.dumps(schema)}\n"
+                        'Example: {"answer": "A", "justification": "Because..."}'
+                    ),
+                }
+            )
+            try:
+                final_response = client.chat(
+                    model=ollama_model,
+                    messages=messages,
+                    format="json",
+                )
+            except _ollama.ResponseError as e:
+                logger.warning(f"Ollama returned an error on final answer request: {e}")
+                return None
+            content = final_response.message.content
+            if not content:
+                return None
+            try:
+                return Response.model_validate_json(content)
+            except pydantic.ValidationError:
+                return parse_response_fallback(content)
 
         for tool_call in response.message.tool_calls:
             if tool_call.function.name == "web_fetch":
