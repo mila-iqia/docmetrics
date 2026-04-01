@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Callable, Literal
 
 import httpx
-
 import pydantic
 import rich.console
 import rich.logging
@@ -211,7 +210,6 @@ def _get_agent_answer_ollama(
     use_web_fetch: bool = False,
     docs_urls: list[str] | None = None,
 ) -> "Response | None":
-
     client = _get_ollama_client(ollama_url)
     ollama_model = _ollama_model_name(model)
     schema = Response.model_json_schema()
@@ -287,10 +285,14 @@ def _get_agent_answer_ollama(
                 url = tool_call.function.arguments.get("url", "")
                 if docs_urls and not _is_allowed_docs_url(url, docs_urls):
                     logger.warning(f"LLM requested disallowed URL (blocked): {url}")
-                    content = f"Access denied: {url!r} is not under the allowed documentation URLs."
+                    content = (
+                        f"Access denied: {url!r} is not under the allowed documentation URLs."
+                    )
                 else:
                     logger.info(f"LLM fetching documentation URL: {url}")
-                    use_ollama_fetch = bool(os.environ.get("OLLAMA_API_KEY")) and not _is_local_url(url)
+                    use_ollama_fetch = bool(
+                        os.environ.get("OLLAMA_API_KEY")
+                    ) and not _is_local_url(url)
                     try:
                         if use_ollama_fetch:
                             content = str(client.web_fetch(**tool_call.function.arguments))
@@ -343,7 +345,12 @@ def evaluate_llm(
     docs_content: str | None = None
     if docs_files:
         docs_content = "\n---\n".join(f.read_text() for f in docs_files)
-    elif with_docs and docs_urls and not _is_ollama_model(model) and any(_is_local_url(u) for u in docs_urls):
+    elif (
+        with_docs
+        and docs_urls
+        and not _is_ollama_model(model)
+        and any(_is_local_url(u) for u in docs_urls)
+    ):
         # Google's url_context tool runs server-side and can't reach localhost URLs; pre-fetch them.
         logger.info(f"Pre-fetching {len(docs_urls)} documentation URL(s) (localhost detected)...")
         docs_content = "\n---\n".join(_fetch_url(u) for u in docs_urls)
@@ -400,7 +407,11 @@ def ask_question(
     num_candidates: int | None = None,
 ) -> Letter | None:
     """Asks a question to the LLM and returns the selected answer letter, or None if unparsable."""
-    q_prefix = f"Question {question_index}/{num_questions}: " if question_index is not None and num_questions is not None else ""
+    q_prefix = (
+        f"Question {question_index}/{num_questions}: "
+        if question_index is not None and num_questions is not None
+        else ""
+    )
     if candidate_index is not None and num_candidates is not None:
         q_prefix += f"[candidate {candidate_index + 1}/{num_candidates}] "
 
@@ -413,7 +424,7 @@ def ask_question(
         prompt = make_prompt(
             question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
         )
-        logger.debug(f"{q_prefix}Prompt sent to LLM: [magenta]{prompt}")
+        logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
         # Use web_fetch tool when docs are given as URLs (not already inlined via --docs-file).
         use_web_fetch = with_docs and bool(docs_urls) and docs_content is None
         agent_answer = _get_agent_answer_ollama(
@@ -422,7 +433,9 @@ def ask_question(
         if not agent_answer:
             logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
             return None
-        logger.info(f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
+        logger.info(
+            f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}"
+        )
         if agent_answer.justification:
             logger.debug(f"{q_prefix}LLM's justification: {agent_answer.justification}")
         return agent_answer.answer
@@ -437,13 +450,15 @@ def ask_question(
     prompt = make_prompt(
         question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
     )
-    logger.debug(f"{q_prefix}Prompt sent to LLM: [magenta]{prompt}")
+    logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
     agent_answer = get_agent_answer(client, model, tools, prompt)
     if not agent_answer:
         logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
         return None
-    logger.info(f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}")
+    logger.info(
+        f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}"
+    )
     if agent_answer.justification:
         logger.debug(f"{q_prefix}LLM's justification: {agent_answer.justification}")
     return agent_answer.answer
@@ -686,7 +701,11 @@ def main():
     if docs_urls and docs_files:
         parser.error("--docs-url and --docs-file are mutually exclusive.")
     score_with_no_context = evaluate_llm(
-        questions, with_docs=False, model=model, ollama_url=ollama_url, num_candidates=num_candidates
+        questions,
+        with_docs=False,
+        model=model,
+        ollama_url=ollama_url,
+        num_candidates=num_candidates,
     )
     score_with_docs = evaluate_llm(
         questions,
