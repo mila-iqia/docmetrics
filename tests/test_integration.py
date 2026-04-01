@@ -6,6 +6,7 @@ Run with::
 """
 
 import os
+import random
 import time
 from pathlib import Path
 
@@ -25,48 +26,38 @@ integration = pytest.mark.skipif(
 
 
 @integration
-def test_benchmark_time_taken():
+@pytest.mark.parametrize("seed", [42])
+@pytest.mark.parametrize("num_questions", [10])
+@pytest.mark.parametrize("num_candidates", [1, 3])
+@pytest.mark.parametrize("model", ["ollama:gpt-oss:20b", "ollama:gpt-oss:120b"])
+def test_mila_docs(seed: int, num_questions: int, num_candidates: int, model: str):
     """Mila docs quiz: with-docs score should exceed without-docs score."""
     questions = load_questions(MILA_QUESTIONS_FILE)
-    questions = questions[:10]
-    t_start = time.time()
-    n_questions = len(questions)
-    result = evaluate_llm(
-        questions,
-        with_docs=False,
-        model=MODEL,
-        ollama_url=OLLAMA_URL,
-        num_candidates=3,
-    )
-    time_taken_no_docs = time.time() - t_start
-    print(
-        f"Time taken for {n_questions} questions x 3 candidates per question: {time_taken_no_docs:.1f} seconds"
-    )
-    print(f"Time per question-candidate: {time_taken_no_docs / (n_questions * 3):.1f} seconds")
-    print(f"Result: {result}")
+    if num_questions == -1:  # If num_questions is -1, use all questions.
+        num_questions = len(questions)
+    else:
+        # Use a subset of questions for speed.
+        random.seed(seed)
+        random.shuffle(questions)
+        questions = questions[:num_questions]
 
-
-@integration
-def test_mila_docs_quiz_with_ollama():
-    """Mila docs quiz: with-docs score should exceed without-docs score."""
-    questions = load_questions(MILA_QUESTIONS_FILE)
     t_start = time.time()
     result_no_docs = evaluate_llm(
         questions,
         with_docs=False,
-        model=MODEL,
+        model=model,
         ollama_url=OLLAMA_URL,
-        num_candidates=3,
+        num_candidates=num_candidates,
     )
     time_taken_no_docs = time.time() - t_start
     t_start = time.time()
     result_with_docs = evaluate_llm(
         questions,
         with_docs=True,
-        model=MODEL,
+        model=model,
         docs_urls=[MILA_DOCS_URL],
         ollama_url=OLLAMA_URL,
-        num_candidates=3,
+        num_candidates=num_candidates,
     )
     time_taken_docs = time.time() - t_start
 
@@ -75,6 +66,13 @@ def test_mila_docs_quiz_with_ollama():
     print(f"\nWithout docs: {result_no_docs.score:.1%} (std: {result_no_docs.score_std:.1%})")
     print(f"With docs:    {result_with_docs.score:.1%} (std: {result_with_docs.score_std:.1%})")
 
+    print(
+        f"Time per answer without docs: {time_taken_no_docs / (num_questions * num_candidates):.1f} seconds"
+    )
+    print(
+        f"Time per answer without docs: {time_taken_no_docs / (num_questions * num_candidates):.1f} seconds"
+    )
+    # IDEALLY.
     assert result_with_docs.score > result_no_docs.score, (
         f"Expected with-docs ({result_with_docs.score:.1%}) > without-docs ({result_no_docs.score:.1%})"
     )
