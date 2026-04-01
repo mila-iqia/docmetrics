@@ -118,16 +118,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Serve PR docs in background
+      - name: Find available port and serve docs in background
         run: |
-          uv run mkdocs serve &
+          PORT=$(python -c 'import socket; s = socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+          echo "DOCS_PORT=$PORT" >> $GITHUB_ENV
+          uv run mkdocs serve --dev-addr 127.0.0.1:$PORT &
           echo $! > /tmp/docs_server.pid
 
       - name: Wait for docs server to be ready
         run: |
           for i in {1..10}; do
-            if curl -s http://localhost:8000/ > /dev/null; then
-              echo "Docs server is ready"
+            if curl -s http://localhost:${{ env.DOCS_PORT }}/ > /dev/null; then
+              echo "Docs server is ready on port ${{ env.DOCS_PORT }}"
               exit 0
             fi
             echo "Waiting for docs server... attempt $i"
@@ -140,7 +142,7 @@ jobs:
         uses: ./
         with:
           questions-file: sample_questions.yaml
-          docs-url: http://localhost:8000
+          docs-url: http://localhost:${{ env.DOCS_PORT }}
           base-docs-url: https://mila-iqia.github.io/docmetrics
           model: ollama:gpt-oss:120b
           ollama-url: http://dgx:11434
