@@ -88,10 +88,10 @@ def test_mila_docs(
         ollama_url=OLLAMA_URL,
         num_candidates=num_candidates,
     )
-    time_taken_docs = time.time() - t_start
+    time_taken_with_docs = time.time() - t_start
 
     print(f"Time taken without docs: {time_taken_no_docs:.1f} seconds")
-    print(f"Time taken with docs:    {time_taken_docs:.1f} seconds")
+    print(f"Time taken with docs:    {time_taken_with_docs:.1f} seconds")
     print(f"\nWithout docs: {result_no_docs.score:.1%} (std: {result_no_docs.score_std:.1%})")
     print(f"With docs:    {result_with_docs.score:.1%} (std: {result_with_docs.score_std:.1%})")
 
@@ -99,7 +99,7 @@ def test_mila_docs(
         f"Time per answer without docs: {time_taken_no_docs / (num_questions * num_candidates):.1f} seconds"
     )
     print(
-        f"Time per answer without docs: {time_taken_no_docs / (num_questions * num_candidates):.1f} seconds"
+        f"Time per answer with docs: {time_taken_with_docs / (num_questions * num_candidates):.1f} seconds"
     )
     # IDEALLY.
     assert result_with_docs.score >= result_no_docs.score, (
