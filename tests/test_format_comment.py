@@ -34,14 +34,22 @@ _CURRENT = {
         "correct_answers": 1,
         "invalid_answers": 0,
         "score": 1 / 3,
-        "answers": [True, False, False],
+        "answers": [
+            {"expected": "A", "selected": "A", "correct": True},
+            {"expected": "B", "selected": "A", "correct": False},
+            {"expected": "C", "selected": "A", "correct": False},
+        ],
     },
     "with_docs": {
         "num_questions": 3,
         "correct_answers": 2,
         "invalid_answers": 0,
         "score": 2 / 3,
-        "answers": [True, True, False],
+        "answers": [
+            {"expected": "A", "selected": "A", "correct": True},
+            {"expected": "B", "selected": "B", "correct": True},
+            {"expected": "C", "selected": "A", "correct": False},
+        ],
     },
 }
 
@@ -52,14 +60,52 @@ _BASE = {
         "correct_answers": 0,
         "invalid_answers": 0,
         "score": 0.0,
-        "answers": [False, False, False],
+        "answers": [
+            {"expected": "A", "selected": "B", "correct": False},
+            {"expected": "B", "selected": "A", "correct": False},
+            {"expected": "C", "selected": "A", "correct": False},
+        ],
     },
     "with_docs": {
         "num_questions": 3,
         "correct_answers": 1,
         "invalid_answers": 0,
         "score": 1 / 3,
-        "answers": [True, False, False],
+        "answers": [
+            {"expected": "A", "selected": "A", "correct": True},
+            {"expected": "B", "selected": "A", "correct": False},
+            {"expected": "C", "selected": "A", "correct": False},
+        ],
+    },
+}
+
+_CURRENT_MULTI = {
+    "questions": _QUESTIONS,
+    "without_docs": {
+        "num_questions": 3,
+        "num_candidates": 5,
+        "correct_answers": 8,
+        "invalid_answers": 0,
+        "score": 8 / 15,
+        "score_std": 0.2,
+        "answers": [
+            {"expected": "A", "pass_rate": 1.0, "selected": ["A", "A", "A", "A", "A"]},
+            {"expected": "B", "pass_rate": 0.6, "selected": ["B", "B", "A", "B", "A"]},
+            {"expected": "C", "pass_rate": 0.6, "selected": ["C", "A", "C", "C", "A"]},
+        ],
+    },
+    "with_docs": {
+        "num_questions": 3,
+        "num_candidates": 5,
+        "correct_answers": 13,
+        "invalid_answers": 0,
+        "score": 13 / 15,
+        "score_std": 0.1,
+        "answers": [
+            {"expected": "A", "pass_rate": 1.0, "selected": ["A", "A", "A", "A", "A"]},
+            {"expected": "B", "pass_rate": 1.0, "selected": ["B", "B", "B", "B", "B"]},
+            {"expected": "C", "pass_rate": 0.6, "selected": ["C", "A", "C", "C", "A"]},
+        ],
     },
 }
 
@@ -96,6 +142,39 @@ def test_result_icon_false():
 
 def test_result_icon_none():
     assert result_icon(None) == "❓"
+
+
+def test_result_icon_single_correct():
+    assert result_icon({"expected": "A", "selected": "A", "correct": True}) == "✅"
+
+
+def test_result_icon_single_incorrect():
+    assert result_icon({"expected": "A", "selected": "B", "correct": False}) == "❌"
+
+
+def test_result_icon_single_invalid():
+    assert result_icon({"expected": "A", "selected": None, "correct": None}) == "❓"
+
+
+def test_result_icon_multi_all_correct():
+    assert result_icon({"expected": "A", "pass_rate": 1.0, "selected": ["A", "A", "A"]}) == "✅"
+
+
+def test_result_icon_multi_none_correct():
+    assert result_icon({"expected": "A", "pass_rate": 0.0, "selected": ["B", "B", "B"]}) == "❌"
+
+
+def test_result_icon_multi_mixed():
+    icon = result_icon({"expected": "A", "pass_rate": 0.6, "selected": ["A", "B", "A", "B", "A"]})
+    assert icon == "🔄 3/5"
+
+
+def test_fmt_score_with_std():
+    assert fmt_score(0.75, 3, 4, 0.1) == "75% (3/4) ±10%"
+
+
+def test_fmt_score_without_std():
+    assert fmt_score(0.75, 3, 4) == "75% (3/4)"
 
 
 def test_question_label_short():
@@ -255,3 +334,26 @@ def test_format_comment_no_answers_no_details_block():
     }
     body = format_comment(current_no_answers, None, "q.yaml", "gemini-2.5-flash")
     assert "<details>" not in body
+
+
+# ---------------------------------------------------------------------------
+# format_comment – multi-candidate
+# ---------------------------------------------------------------------------
+
+
+def test_format_comment_multi_candidate_score_std():
+    """Score table includes ± std when score_std is present."""
+    body = format_comment(_CURRENT_MULTI, None, "q.yaml", "gemini-2.5-flash")
+    assert "±" in body
+
+
+def test_format_comment_multi_candidate_mixed_icon():
+    """Mixed pass rate produces the 🔄 icon in per-question results."""
+    body = format_comment(_CURRENT_MULTI, None, "q.yaml", "gemini-2.5-flash")
+    assert "🔄" in body
+
+
+def test_format_comment_multi_candidate_all_correct_icon():
+    """All-correct questions show ✅ even in multi-candidate mode."""
+    body = format_comment(_CURRENT_MULTI, None, "q.yaml", "gemini-2.5-flash")
+    assert "✅" in body
