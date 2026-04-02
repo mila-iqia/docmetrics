@@ -120,7 +120,7 @@ jobs:
 
       - name: Find available port and serve docs in background
         run: |
-          PORT=$(python -c 'import socket; s = socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+          PORT=$(uv run python -c 'import socket; s = socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
           echo "DOCS_PORT=$PORT" >> $GITHUB_ENV
           uv run mkdocs serve --dev-addr 127.0.0.1:$PORT &
           echo $! > /tmp/docs_server.pid
