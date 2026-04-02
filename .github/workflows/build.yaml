@@ -147,6 +147,7 @@ jobs:
           model: ollama:gpt-oss:120b
           ollama-url: http://dgx:11434
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          num-candidates: 2
 
       - name: Stop docs server
         if: always()
