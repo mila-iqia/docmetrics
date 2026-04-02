@@ -6,8 +6,14 @@ import json
 from pathlib import Path
 
 
-def fmt_score(score: float, correct: int, total: int, score_std: float | None = None) -> str:
-    s = f"{score:.0%} ({correct}/{total})"
+def fmt_score(
+    score: float,
+    correct: int,
+    total: int,
+    score_std: float | None = None,
+    num_candidates: int = 1,
+) -> str:
+    s = f"{score:.0%} ({correct}/{total * num_candidates})"
     if score_std is not None:
         s += f" ±{score_std:.0%}"
     return s
@@ -100,8 +106,8 @@ def format_comment(
         "| | Without docs | With docs | Δ&nbsp;(docs&nbsp;−&nbsp;no&nbsp;docs) |",
         "|:---|:---:|:---:|:---:|",
         f"| **This PR**"
-        f" | {fmt_score(cur_no['score'], cur_no['correct_answers'], cur_no['num_questions'], cur_no.get('score_std'))}"
-        f" | {fmt_score(cur_wi['score'], cur_wi['correct_answers'], cur_wi['num_questions'], cur_wi.get('score_std'))}"
+        f" | {fmt_score(cur_no['score'], cur_no['correct_answers'], cur_no['num_questions'], cur_no.get('score_std'), cur_no.get('num_candidates', 1))}"
+        f" | {fmt_score(cur_wi['score'], cur_wi['correct_answers'], cur_wi['num_questions'], cur_wi.get('score_std'), cur_wi.get('num_candidates', 1))}"
         f" | {fmt_delta(cur_wi['score'], cur_no['score'])} |",
     ]
 
@@ -115,8 +121,8 @@ def format_comment(
             label += " *(computed)*"
         lines += [
             f"| **Base ({label})**"
-            f" | {fmt_score(base_no['score'], base_no['correct_answers'], base_no['num_questions'])}"
-            f" | {fmt_score(base_wi['score'], base_wi['correct_answers'], base_wi['num_questions'])}"
+            f" | {fmt_score(base_no['score'], base_no['correct_answers'], base_no['num_questions'], num_candidates=base_no.get('num_candidates', 1))}"
+            f" | {fmt_score(base_wi['score'], base_wi['correct_answers'], base_wi['num_questions'], num_candidates=base_wi.get('num_candidates', 1))}"
             f" | {fmt_delta(base_wi['score'], base_no['score'])} |",
             f"| **Change**"
             f" | {fmt_delta(cur_no['score'], base_no['score'])}"
