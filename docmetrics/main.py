@@ -10,7 +10,7 @@ import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 import httpx
 import pydantic
@@ -313,7 +313,6 @@ def _get_agent_answer_ollama(
 
 def evaluate_llm(
     questions: list[Question],
-    with_docs: bool,
     model: str,
     docs_urls: list[str] | None = None,
     docs_files: list[Path] | None = None,
@@ -326,7 +325,6 @@ def evaluate_llm(
     Parameters
     ----------
     questions: The list of questions to ask the LLM.
-    with_docs: Whether to provide documentation URLs as context to the LLM.
     model: The name of the LLM model to use.
     docs_urls: A list of URLs to relevant documentation pages to provide as context.
     docs_files: A list of local file paths whose content will be inlined into the prompt.
@@ -347,12 +345,7 @@ def evaluate_llm(
     docs_content: str | None = None
     if docs_files:
         docs_content = "\n---\n".join(f.read_text() for f in docs_files)
-    elif (
-        with_docs
-        and docs_urls
-        and not _is_ollama_model(model)
-        and any(_is_local_url(u) for u in docs_urls)
-    ):
+    elif docs_urls and not _is_ollama_model(model) and any(_is_local_url(u) for u in docs_urls):
         # Google's url_context tool runs server-side and can't reach localhost URLs; pre-fetch them.
         logger.info(f"Pre-fetching {len(docs_urls)} documentation URL(s) (localhost detected)...")
         docs_content = "\n---\n".join(_fetch_url(u) for u in docs_urls)
@@ -379,18 +372,10 @@ def evaluate_llm(
                 num_questions=num_questions,
                 candidate_index=candidate_index if num_candidates > 1 else None,
                 num_candidates=num_candidates if num_candidates > 1 else None,
-                with_docs=with_docs,
                 model=model,
                 docs_urls=docs_urls,
                 docs_content=docs_content,
                 ollama_url=ollama_url,
-                # Adding this gives the LLM the ability to consult URLs given in the prompt.
-                # Not needed (or wanted) when docs are already inlined or for Ollama models.
-                tools=(
-                    [types.Tool(url_context=types.UrlContext())]
-                    if with_docs and docs_content is None and not _is_ollama_model(model)
-                    else None
-                ),
             )
             runs.append(selected)
             progress_bar.update(1)
@@ -411,10 +396,10 @@ def load_questions(questions_path: Path) -> list[Question]:
 def ask_question(
     client: genai.Client | None,
     question: Question,
-    with_docs: bool,
+    # with_docs: bool,
     model: str,
     docs_urls: list[str] | None,
-    tools: list[types.Tool | Callable] | None,
+    # tools: list[types.Tool | Callable] | None,
     docs_content: str | None = None,
     ollama_url: str = OLLAMA_DEFAULT_URL,
     question_index: int | None = None,
@@ -437,12 +422,10 @@ def ask_question(
         return dummy_answer
 
     if _is_ollama_model(model):
-        prompt = make_prompt(
-            question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
-        )
+        prompt = make_prompt(question, docs_urls=docs_urls, docs_content=docs_content)
         logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
         # Use web_fetch tool when docs are given as URLs (not already inlined via --docs-file).
-        use_web_fetch = with_docs and bool(docs_urls) and docs_content is None
+        use_web_fetch = bool(docs_urls) and docs_content is None
         agent_answer = _get_agent_answer_ollama(
             model, prompt, ollama_url, use_web_fetch=use_web_fetch, docs_urls=docs_urls
         )
@@ -463,12 +446,15 @@ def ask_question(
     # there.
 
     assert client is not None
-    prompt = make_prompt(
-        question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
-    )
-    logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
     # TODO: use https://ai.google.dev/api/batch-api instead of single requests.
-    agent_answer = get_agent_answer(client, model, tools, prompt)
+    agent_answer = get_agent_answer(
+        client,
+        model=model,
+        question=question,
+        docs_urls=docs_urls,
+        docs_content=docs_content,
+        q_prefix=q_prefix,
+    )
     if not agent_answer:
         logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
         return None
@@ -483,9 +469,17 @@ def ask_question(
 def get_agent_answer(
     client: genai.Client,
     model: str,
-    tools: list[types.Tool | Callable] | None,
-    prompt: str,
+    # tools: list[types.Tool | Callable] | None,
+    question: Question,
+    docs_urls: list[str] | None,
+    docs_content: str | None,
+    q_prefix: str = "",
 ) -> Response | None:
+    prompt = make_prompt(question, docs_urls=docs_urls, docs_content=docs_content)
+    logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
+    # Adding this gives the LLM the ability to consult URLs given in the prompt.
+    # Not needed (or wanted) when docs are already inlined or for Ollama models.
+    tools = [types.Tool(url_context=types.UrlContext())] if docs_urls else None
     api_response = client.models.generate_content(
         model=model,
         contents=prompt,
@@ -573,16 +567,15 @@ def parse_response_fallback(response_str: str) -> Response | None:
 
 def make_prompt(
     question: Question,
-    with_docs: bool,
     docs_urls: list[str] | None = None,
     docs_content: str | None = None,
 ) -> str:
-    if with_docs and docs_content:
+    assert bool(docs_content) ^ bool(docs_urls), "can either pass content or a URL ATM, not both."
+    preamble = ""
+    if docs_content:
         preamble = f"Based on the following documentation:\n\n{docs_content}\n\n"
-    elif with_docs and docs_urls:
+    elif docs_urls:
         preamble = "Based on this documentation: " + ", ".join(docs_urls) + ",\n"
-    else:
-        preamble = ""
     return (
         preamble
         + "Select the correct answer to the following question:\n"
@@ -722,49 +715,37 @@ def main():
     num_candidates: int = args.num_candidates
     if docs_urls and docs_files:
         parser.error("--docs-url and --docs-file are mutually exclusive.")
-
-    if docs_urls or docs_files:
-        result_with_docs = evaluate_llm(
-            questions,
-            with_docs=True,
-            model=model,
-            docs_urls=docs_urls,
-            docs_files=docs_files,
-            ollama_url=ollama_url,
-            num_candidates=num_candidates,
-        )
+    context: str
+    if docs_urls:
+        context = "with docs URL(s)"
+    elif docs_files:
+        context = "with docs file(s)"
     else:
-        result_with_docs = None
-    result_without_docs = evaluate_llm(
+        context = "without docs"
+    result: EvaluationResult = evaluate_llm(
         questions,
-        with_docs=False,
         model=model,
+        docs_urls=docs_urls,
+        docs_files=docs_files,
         ollama_url=ollama_url,
         num_candidates=num_candidates,
     )
 
+    output_message = (
+        f"Final score for {model=} {context}: {result.score:.1%} ± {result.score_std:.1%} "
+    )
+    logger.info(output_message)
     if args.output_format == "json":
         print(
             json.dumps(
                 {
                     "questions": [{"question": q.question} for q in questions],
-                    "without_docs": _serialize_evaluation_result(result_without_docs),
-                    "with_docs": (
-                        _serialize_evaluation_result(result_with_docs)
-                        if result_with_docs
-                        else None
-                    ),
+                    "result": _serialize_evaluation_result(result),
                 }
             )
         )
     else:
-        print(
-            f"Without context: {result_without_docs.score:.1%} ± {result_without_docs.score_std:.1%}"
-        )
-        if result_with_docs:
-            print(
-                f"With {'docs URL' if docs_urls else 'docs file'}: {result_with_docs.score:.1%} ± {result_with_docs.score_std:.1%}"
-            )
+        print(output_message)
 
 
 if __name__ == "__main__":
