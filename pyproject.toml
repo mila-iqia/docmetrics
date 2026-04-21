@@ -17,6 +17,9 @@ dependencies = [
     "simple-parsing>=0.1.7",
 ]
 
+[project.scripts]
+docmetrics = "docmetrics.main:main"
+
 
 [dependency-groups]
 dev = [
