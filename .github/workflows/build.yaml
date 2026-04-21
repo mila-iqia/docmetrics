@@ -144,7 +144,7 @@ jobs:
           questions-file: sample_questions.yaml
           docs-url: http://localhost:${{ env.DOCS_PORT }}
           base-docs-url: https://mila-iqia.github.io/docmetrics
-          model: ollama:gpt-oss:120b
+          model: ollama:gemma4:e2b
           ollama-url: http://dgx:11434
           github-token: ${{ secrets.GITHUB_TOKEN }}
           num-candidates: 2
