@@ -1,0 +1,17 @@
+- question: "Which students have access to the Mila cluster?"
+  options:
+    A: "Current Students of Core Professors"
+    B: "Students enrolled in the professional MsPro program"
+    C: "All university students residing in Montreal"
+    D: "Students supervised by any affiliated or non-core professor"
+    E: "Undergraduate interns"
+  answer: A
+
+- question: "How many H100 GPUs are there on the Mila cluster?"
+  options:
+    A: "128"
+    B: "16"
+    C: "8 nodes with 4 H100-80GB each, for a total of 32."
+    D: "The Mila cluster does not have any H100 GPUs. The Tamia cluster however has 168 H100 gpus."
+    E: "Unknown. This information is not available either in the context or on the web."
+  answer: B

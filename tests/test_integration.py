@@ -18,9 +18,9 @@ import pytest
 from docmetrics.main import OLLAMA_DEFAULT_URL, evaluate_llm, load_questions
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", OLLAMA_DEFAULT_URL)
-MILA_QUESTIONS_FILE = Path(__file__).parent.parent / "mila_docs_questions.yaml"
+MILA_QUESTIONS_FILE = Path(__file__).parent / "short_quiz.yaml"
+# MILA_QUESTIONS_FILE = Path(__file__).parent / "mila_docs_questions.yaml"
 MILA_DOCS_URL = "https://docs.mila.quebec"
-MODEL = "ollama:gpt-oss:120b"
 
 in_github_CI = "GITHUB_ACTIONS" in os.environ
 integration = pytest.mark.skipif(
@@ -70,7 +70,8 @@ def mila_docs_url(tmp_path_factory: pytest.TempPathFactory):
 @pytest.mark.parametrize("num_questions", [5])
 @pytest.mark.parametrize("num_candidates", [1, 3])
 @pytest.mark.parametrize(
-    "model", ["ollama:gpt-oss:20b", "ollama:gpt-oss:120b", "ollama:qwen3-coder-next"]
+    "model",
+    ["ollama:gemma4:e2b", "ollama:gpt-oss:20b", "ollama:qwen3-coder-next", "ollama:gemma4:31b"],
 )
 def test_mila_docs(
     mila_docs_url: str, seed: int, num_questions: int, num_candidates: int, model: str
