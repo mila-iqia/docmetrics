@@ -530,6 +530,12 @@ def parse_response_fallback(response_str: str) -> Response | None:
     >>> parse_response_fallback('This description perfectly matches the requirement for storing "temporary model checkpoints". Answer: A')
     Response(answer='A', justification='This description perfectly matches the requirement for storing "temporary model checkpoints". Answer:')
     """
+    if response_str.startswith("```json") and response_str.endswith("```"):
+        response_str = response_str.removeprefix("```json").removesuffix("```").strip()
+        try:
+            return Response.model_validate_json(response_str)
+        except pydantic.ValidationError:
+            pass
     try:
         last_line = response_str.strip().splitlines()[-1].strip().removesuffix(".")
         # todo: if the last word is a single letter (capitalised or not), use this as the LLM's guess.
@@ -700,19 +706,23 @@ def main():
     num_candidates: int = args.num_candidates
     if docs_urls and docs_files:
         parser.error("--docs-url and --docs-file are mutually exclusive.")
-    score_with_no_context = evaluate_llm(
+
+    if docs_urls or docs_files:
+        result_with_docs = evaluate_llm(
+            questions,
+            with_docs=True,
+            model=model,
+            docs_urls=docs_urls,
+            docs_files=docs_files,
+            ollama_url=ollama_url,
+            num_candidates=num_candidates,
+        )
+    else:
+        result_with_docs = None
+    result_without_docs = evaluate_llm(
         questions,
         with_docs=False,
         model=model,
-        ollama_url=ollama_url,
-        num_candidates=num_candidates,
-    )
-    score_with_docs = evaluate_llm(
-        questions,
-        with_docs=True,
-        model=model,
-        docs_urls=docs_urls,
-        docs_files=docs_files,
         ollama_url=ollama_url,
         num_candidates=num_candidates,
     )
@@ -722,14 +732,23 @@ def main():
             json.dumps(
                 {
                     "questions": [{"question": q.question} for q in questions],
-                    "without_docs": _serialize_evaluation_result(score_with_no_context),
-                    "with_docs": _serialize_evaluation_result(score_with_docs),
+                    "without_docs": _serialize_evaluation_result(result_without_docs),
+                    "with_docs": (
+                        _serialize_evaluation_result(result_with_docs)
+                        if result_with_docs
+                        else None
+                    ),
                 }
             )
         )
     else:
-        print(f"{score_with_no_context=}")
-        print(f"{score_with_docs=}")
+        print(
+            f"Without context: {result_without_docs.score:.1%} ± {result_without_docs.score_std:.1%}"
+        )
+        if result_with_docs:
+            print(
+                f"With {'docs URL' if docs_urls else 'docs file'}: {result_with_docs.score:.1%} ± {result_with_docs.score_std:.1%}"
+            )
 
 
 if __name__ == "__main__":
