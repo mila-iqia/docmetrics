@@ -89,7 +89,6 @@ def test_mila_docs(
     t_start = time.time()
     result_no_docs = evaluate_llm(
         questions,
-        with_docs=False,
         model=model,
         ollama_url=OLLAMA_URL,
         num_candidates=num_candidates,
@@ -98,7 +97,6 @@ def test_mila_docs(
     t_start = time.time()
     result_with_docs = evaluate_llm(
         questions,
-        with_docs=True,
         model=model,
         docs_urls=[mila_docs_url],
         ollama_url=OLLAMA_URL,

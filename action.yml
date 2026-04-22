@@ -205,7 +205,8 @@ runs:
             json.dump(metadata, f)
         PYEOF
 
-        cp /tmp/docmetrics-current.json "$GITHUB_WORKSPACE/docmetrics-current.json"
+        cp /tmp/docmetrics-current-with-docs.json "$GITHUB_WORKSPACE/docmetrics-current-with-docs.json"
+        cp /tmp/docmetrics-current-without-docs.json "$GITHUB_WORKSPACE/docmetrics-current-without-docs.json"
         if [ -f /tmp/docmetrics-base.json ]; then
           cp /tmp/docmetrics-base.json "$GITHUB_WORKSPACE/docmetrics-base.json"
         fi
@@ -229,7 +230,8 @@ runs:
         fi
 
         python3 "${{ github.action_path }}/.github/scripts/format_comment.py" \
-          --current /tmp/docmetrics-current.json \
+          --current-with-docs /tmp/docmetrics-current-with-docs.json \
+          --current-without-docs /tmp/docmetrics-current-without-docs.json \
           $BASE_ARGS \
           --questions-file "${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
