@@ -7,6 +7,7 @@ import math
 import os
 import random
 import re
+import sys
 import warnings
 from pathlib import Path
 from typing import Callable, Literal
@@ -15,6 +16,7 @@ import httpx
 import pydantic
 import rich.console
 import rich.logging
+import tqdm
 import yaml
 from dotenv import load_dotenv
 from google import genai
@@ -359,6 +361,14 @@ def evaluate_llm(
     # to ask multiple questions at once with the same context.
 
     answer_results: list[QuestionResult] = []
+    progress_bar = tqdm.tqdm(
+        total=num_questions * num_candidates,
+        disable=not sys.stdout.isatty(),
+        desc=f"Evaluating {model} ({'with' if with_docs else 'without'} docs)",
+        unit="question",
+    )
+    score_so_far = 0
+    total = 0
     for question_index, question in enumerate(questions, 1):
         runs: list[Letter | None] = []
         for candidate_index in range(num_candidates):
@@ -383,8 +393,14 @@ def evaluate_llm(
                 ),
             )
             runs.append(selected)
+            progress_bar.update(1)
+            score_so_far += 1 if selected == question.answer else 0
+            total += 1
+            progress_bar.set_postfix(score=f"{score_so_far / total:.2%}")
         answer_results.append(QuestionResult(expected=question.answer, runs=tuple(runs)))
-
+    logger.info(
+        f"Final score for {model} ({'with' if with_docs else 'without'} docs): {score_so_far}/{total} = {score_so_far / total:.2%}"
+    )
     return EvaluationResult(answers=tuple(answer_results), num_candidates=num_candidates)
 
 
