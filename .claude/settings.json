@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(./answers.txt)",
+      "Read(answers.txt)",
+      "Read(/home/fabrice/repos/temp_docmetrics_testing/answers.txt)",
+      "Read(**/answers.txt)",
+      "Grep(**/answers.txt)",
+      "Glob(**/answers.txt)",
+      "Bash(cat *answers.txt*)",
+      "Bash(less *answers.txt*)",
+      "Bash(more *answers.txt*)",
+      "Bash(head *answers.txt*)",
+      "Bash(tail *answers.txt*)",
+      "Bash(grep *answers.txt*)",
+      "Bash(rg *answers.txt*)",
+      "Bash(awk *answers.txt*)",
+      "Bash(sed *answers.txt*)",
+      "Bash(xxd *answers.txt*)",
+      "Bash(od *answers.txt*)",
+      "Bash(hexdump *answers.txt*)",
+      "Bash(strings *answers.txt*)",
+      "Bash(cut *answers.txt*)",
+      "Bash(wc *answers.txt*)",
+      "Bash(tac *answers.txt*)",
+      "Bash(nl *answers.txt*)",
+      "Bash(file *answers.txt*)",
+      "Bash(python *answers.txt*)",
+      "Bash(python3 *answers.txt*)",
+      "Bash(perl *answers.txt*)",
+      "Bash(ruby *answers.txt*)",
+      "Bash(node *answers.txt*)"
+    ]
+  }
+}
