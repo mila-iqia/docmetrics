@@ -23,6 +23,8 @@ from google import genai
 from google.genai import types
 from pydantic.dataclasses import dataclass
 
+from docmetrics.quiz import run_quiz
+
 logger = logging.getLogger(__name__)
 
 Letter = Literal["A", "B", "C", "D", "E"]
@@ -124,6 +126,92 @@ class EvaluationResult:
         mean = sum(rates) / len(rates)
         variance = sum((r - mean) ** 2 for r in rates) / len(rates)
         return math.sqrt(variance)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--verbose", action="count")
+    # Evaluate args on the top-level parser so `docmetrics` (no subcommand) works.
+    _add_evaluate_args(parser, questions_required=False)
+
+    subparsers = parser.add_subparsers(dest="subcommand")
+
+    evaluate_parser = subparsers.add_parser(
+        "evaluate",
+        help="Evaluate an LLM on documentation questions (default when no subcommand is given).",
+    )
+    evaluate_parser.add_argument("-v", "--verbose", action="count")
+    _add_evaluate_args(evaluate_parser)
+
+    quiz_parser = subparsers.add_parser(
+        "quiz",
+        help="Take the quiz interactively in the terminal.",
+    )
+    quiz_parser.add_argument("-v", "--verbose", action="count")
+    quiz_parser.add_argument("--questions", type=Path, required=True)
+
+    args = parser.parse_args()
+    verbose: int = args.verbose or 0
+
+    logging.basicConfig(
+        level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
+        handlers=[
+            rich.logging.RichHandler(markup=True, console=rich.console.Console(stderr=True))
+        ],
+        format="%(message)s",
+    )
+    logger.setLevel(  # this logger specifically.
+        logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
+    )
+
+    if args.subcommand == "quiz":
+        questions = load_questions(questions_path=args.questions)
+        run_quiz(questions)
+        return
+
+    # Default: evaluate (subcommand is None or "evaluate")
+    if args.questions is None:
+        parser.error("the following arguments are required: --questions")
+
+    questions = load_questions(questions_path=args.questions)
+    model: str = args.model
+    docs_urls: list[str] | None = args.docs_url if args.docs_url else None
+    docs_files: list[Path] | None = args.docs_file if args.docs_file else None
+    ollama_url: str = args.ollama_url
+    num_candidates: int = args.num_candidates
+    if docs_urls and docs_files:
+        parser.error("--docs-url and --docs-file are mutually exclusive.")
+    context: str
+    if docs_urls:
+        context = "with docs URL(s)"
+    elif docs_files:
+        context = "with docs file(s)"
+    else:
+        context = "without docs"
+    result: EvaluationResult = evaluate_llm(
+        questions,
+        model=model,
+        docs_urls=docs_urls,
+        docs_files=docs_files,
+        ollama_url=ollama_url,
+        num_candidates=num_candidates,
+    )
+
+    output_message = (
+        f"Final score for {model=} {context}: {result.score:.1%} ± {result.score_std:.1%} "
+    )
+    logger.info(output_message)
+    if args.output_format == "json":
+        print(
+            json.dumps(
+                {
+                    "questions": [{"question": q.question} for q in questions],
+                    "result": _serialize_evaluation_result(result),
+                }
+            )
+        )
+    else:
+        print(output_message)
 
 
 @functools.cache
@@ -658,94 +746,6 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         default="text",
         help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
     )
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--verbose", action="count")
-    # Evaluate args on the top-level parser so `docmetrics` (no subcommand) works.
-    _add_evaluate_args(parser, questions_required=False)
-
-    subparsers = parser.add_subparsers(dest="subcommand")
-
-    evaluate_parser = subparsers.add_parser(
-        "evaluate",
-        help="Evaluate an LLM on documentation questions (default when no subcommand is given).",
-    )
-    evaluate_parser.add_argument("-v", "--verbose", action="count")
-    _add_evaluate_args(evaluate_parser)
-
-    quiz_parser = subparsers.add_parser(
-        "quiz",
-        help="Take the quiz interactively in the terminal.",
-    )
-    quiz_parser.add_argument("-v", "--verbose", action="count")
-    quiz_parser.add_argument("--questions", type=Path, required=True)
-
-    args = parser.parse_args()
-    verbose: int = args.verbose or 0
-
-    logging.basicConfig(
-        level=logging.DEBUG if verbose >= 3 else logging.INFO if verbose == 2 else logging.WARNING,
-        handlers=[
-            rich.logging.RichHandler(markup=True, console=rich.console.Console(stderr=True))
-        ],
-        format="%(message)s",
-    )
-    logger.setLevel(  # this logger specifically.
-        logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
-    )
-
-    if args.subcommand == "quiz":
-        from docmetrics.quiz import run_quiz
-
-        questions = load_questions(questions_path=args.questions)
-        run_quiz(questions)
-        return
-
-    # Default: evaluate (subcommand is None or "evaluate")
-    if args.questions is None:
-        parser.error("the following arguments are required: --questions")
-
-    questions = load_questions(questions_path=args.questions)
-    model: str = args.model
-    docs_urls: list[str] | None = args.docs_url if args.docs_url else None
-    docs_files: list[Path] | None = args.docs_file if args.docs_file else None
-    ollama_url: str = args.ollama_url
-    num_candidates: int = args.num_candidates
-    if docs_urls and docs_files:
-        parser.error("--docs-url and --docs-file are mutually exclusive.")
-    context: str
-    if docs_urls:
-        context = "with docs URL(s)"
-    elif docs_files:
-        context = "with docs file(s)"
-    else:
-        context = "without docs"
-    result: EvaluationResult = evaluate_llm(
-        questions,
-        model=model,
-        docs_urls=docs_urls,
-        docs_files=docs_files,
-        ollama_url=ollama_url,
-        num_candidates=num_candidates,
-    )
-
-    output_message = (
-        f"Final score for {model=} {context}: {result.score:.1%} ± {result.score_std:.1%} "
-    )
-    logger.info(output_message)
-    if args.output_format == "json":
-        print(
-            json.dumps(
-                {
-                    "questions": [{"question": q.question} for q in questions],
-                    "result": _serialize_evaluation_result(result),
-                }
-            )
-        )
-    else:
-        print(output_message)
 
 
 if __name__ == "__main__":
