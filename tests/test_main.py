@@ -15,6 +15,7 @@ from docmetrics.main import (
     ask_question,
     evaluate_llm,
     get_agent_answer,
+    shuffle_options,
 )
 
 # ---------------------------------------------------------------------------
@@ -180,7 +181,10 @@ def test_evaluate_llm_score():
     answers: list[Letter] = [rng.choice(list(q.options.keys())) for q in QUESTIONS]
     expected_correct = sum(a == q.answer for a, q in zip(answers, QUESTIONS))
 
-    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+    with (
+        patch("docmetrics.main.get_google_genai_client") as mock_factory,
+        patch("docmetrics.main.shuffle_options", side_effect=lambda q: q),
+    ):
         client = MagicMock()
         mock_factory.return_value = client
         client.models.generate_content.side_effect = [make_fake_response(a) for a in answers]
@@ -230,7 +234,10 @@ def test_evaluate_llm_num_candidates():
     """With num_candidates=N, each QuestionResult has N runs."""
     n = 3
     answers: list[Letter] = ["A", "B", "A", "C", "B", "B", "A", "C", "B"]  # 3 per question
-    with patch("docmetrics.main.get_google_genai_client") as mock_factory:
+    with (
+        patch("docmetrics.main.get_google_genai_client") as mock_factory,
+        patch("docmetrics.main.shuffle_options", side_effect=lambda q: q),
+    ):
         client = MagicMock()
         mock_factory.return_value = client
         client.models.generate_content.side_effect = [make_fake_response(a) for a in answers]
@@ -268,3 +275,37 @@ def test_evaluate_llm_without_docs_no_url_tool():
         assert not any(isinstance(t, types.Tool) and t.url_context is not None for t in tools), (
             "Did not expect a UrlContext tool when with_docs=False"
         )
+
+
+# ---------------------------------------------------------------------------
+# shuffle_options tests
+# ---------------------------------------------------------------------------
+
+
+def test_shuffle_options_preserves_texts_and_updates_answer():
+    """Shuffled question has same option texts and correct answer text is unchanged."""
+    random.seed(0)
+    q = Question(question="Q?", options={"A": "correct", "B": "wrong1", "C": "wrong2"}, answer="A")
+    shuffled = shuffle_options(q)
+    assert set(shuffled.options.values()) == set(q.options.values())
+    assert shuffled.options[shuffled.answer] == q.options[q.answer]
+
+
+def test_shuffle_options_single_option_unchanged():
+    """A question with one option is returned unchanged."""
+    q = Question(question="Q?", options={"A": "only"}, answer="A")
+    assert shuffle_options(q) is q
+
+
+def test_shuffle_options_answer_always_valid():
+    """Shuffled answer letter is always one of the option keys."""
+    for seed in range(20):
+        random.seed(seed)
+        q = Question(
+            question="Q?",
+            options={"A": "opt1", "B": "opt2", "C": "opt3", "D": "opt4"},
+            answer="C",
+        )
+        shuffled = shuffle_options(q)
+        assert shuffled.answer in shuffled.options
+        assert shuffled.options[shuffled.answer] == q.options[q.answer]

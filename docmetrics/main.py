@@ -35,6 +35,7 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434"
 """Default base URL for the Ollama server."""
 __all__ = [
     "evaluate_llm",
+    "shuffle_options",
     "ask_question",
     "load_questions",
     "Question",
@@ -57,6 +58,8 @@ class Question:
 
     def __postinit__(self):
         assert self.answer in self.options, "correct answer isn't in the options!"
+        options_lower = [o.lower for o in self.options]
+        assert len(options_lower) == len(set(options_lower)), "duplicated answers detected"
 
 
 class Response(pydantic.BaseModel):
@@ -309,6 +312,23 @@ def _get_agent_answer_ollama(
             )
 
 
+def shuffle_options(question: Question) -> Question:
+    """Return a copy of `question` with options shuffled into a random order.
+
+    Letter keys (A, B, C, ...) are kept but reassigned to the shuffled texts, so
+    the correct `answer` letter is updated to point to the same text as before.
+    """
+    if len(question.options) <= 1:
+        return question
+    letters = list(question.options.keys())
+    texts = list(question.options.values())
+    random.shuffle(texts)
+    new_options = dict(zip(letters, texts))
+    original_answer_text = question.options[question.answer]
+    new_answer = next(k for k, v in new_options.items() if v == original_answer_text)
+    return dataclasses.replace(question, options=new_options, answer=new_answer)
+
+
 def evaluate_llm(
     questions: list[Question],
     with_docs: bool,
@@ -362,9 +382,10 @@ def evaluate_llm(
     for question_index, question in enumerate(questions, 1):
         runs: list[Letter | None] = []
         for candidate_index in range(num_candidates):
+            rand_question = shuffle_options(question)
             selected = ask_question(
                 client=client,
-                question=question,
+                question=rand_question,
                 question_index=question_index,
                 num_questions=num_questions,
                 candidate_index=candidate_index if num_candidates > 1 else None,
@@ -382,7 +403,14 @@ def evaluate_llm(
                     else None
                 ),
             )
-            runs.append(selected)
+            original_letter: Letter | None = None
+            if selected:
+                selected_value = rand_question.options.get(selected, None)
+                original_letter = next(
+                    ((k, v) for k, v in question.options.items() if v == selected_value),
+                    (None, None),
+                )[0]
+            runs.append(original_letter)
         answer_results.append(QuestionResult(expected=question.answer, runs=tuple(runs)))
 
     return EvaluationResult(answers=tuple(answer_results), num_candidates=num_candidates)
