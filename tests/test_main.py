@@ -9,13 +9,13 @@ from docmetrics.main import (
     DUMMY_MODEL,
     EvaluationResult,
     Letter,
-    Question,
     QuestionResult,
     Response,
     ask_question,
     evaluate_llm,
     get_agent_answer,
 )
+from docmetrics.objects import Question
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -145,14 +145,18 @@ def test_get_agent_answer_with_url_metadata():
 def test_ask_question_correct():
     """Returns the correct letter when the LLM answers correctly."""
     q = QUESTIONS[0]  # answer is "A"
-    result = ask_question(mock_client("A"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None)
+    result = ask_question(
+        mock_client("A"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None
+    )
     assert result == "A"
 
 
 def test_ask_question_incorrect():
     """Returns the selected letter (not the correct one) when the LLM answers incorrectly."""
     q = QUESTIONS[0]  # answer is "A"
-    result = ask_question(mock_client("B"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None)
+    result = ask_question(
+        mock_client("B"), q, with_docs=False, model="fake-model", docs_urls=None, tools=None
+    )
     assert result == "B"
 
 
@@ -166,7 +170,10 @@ def test_ask_question_invalid():
     response.parsed = None
     client.models.generate_content.return_value = response
 
-    assert ask_question(client, q, with_docs=False, model="fake-model", docs_urls=None, tools=None) is None
+    assert (
+        ask_question(client, q, with_docs=False, model="fake-model", docs_urls=None, tools=None)
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------

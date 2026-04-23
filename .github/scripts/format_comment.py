@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Formats docmetrics results as a GitHub PR comment body (Markdown)."""
+"""Formats docmetrics results as a GitHub PR comment body (Markdown).
+
+Takes three result JSONs (no-docs baseline, with-base-docs, with-PR-docs) and
+produces a three-row comparison table. The headline delta compares the two
+doc-providing runs: with-PR-docs − with-base-docs.
+"""
 
 import argparse
 import json
-from pathlib import Path
 
 
 def fmt_score(
@@ -58,131 +62,92 @@ def question_label(questions: list | None, i: int, max_len: int = 80) -> str:
     if not questions or i >= len(questions):
         return f"Q{i + 1}"
     text = questions[i].get("question", f"Q{i + 1}")
-    text = " ".join(text.split())  # normalise whitespace
+    text = " ".join(text.split())
     if len(text) > max_len:
         text = text[: max_len - 1] + "…"
-    return text.replace("|", "\\|")  # escape pipe so it doesn't break the table
+    return text.replace("|", "\\|")
+
+
+def _score_cell(result: dict) -> str:
+    return fmt_score(
+        result["score"],
+        result["correct_answers"],
+        result["num_questions"],
+        result.get("score_std"),
+        result.get("num_candidates", 1),
+    )
 
 
 def format_comment(
-    current: dict,
-    base: dict | None,
+    without_docs: dict,
+    with_base_docs: dict,
+    with_docs: dict,
     questions_file: str,
     model: str,
-    base_ref: str = "base",
-    base_source: str | None = None,
 ) -> str:
     """Return the full Markdown body for the PR comment."""
-    cur_no = current["without_docs"]
-    cur_wi = current["with_docs"]
-    questions: list | None = current.get("questions")
+    no_res = without_docs["result"]
+    base_res = with_base_docs["result"]
+    pr_res = with_docs["result"]
+    questions: list | None = with_docs.get("questions") or without_docs.get("questions")
 
     lines: list[str] = ["<!-- docmetrics -->", "## DocMetrics Report", ""]
 
-    # ── Summary line (only when a base comparison is available) ──────────────
-    if base:
-        base_wi = base["with_docs"]
-        delta_pp = round((cur_wi["score"] - base_wi["score"]) * 100)
-        base_ref_label = f"`{base_ref}`"
-        delta_str = fmt_delta(cur_wi["score"], base_wi["score"])
-        if delta_pp > 0:
-            lines.append(
-                f"> Merging this PR into {base_ref_label} will **increase** the"
-                f" with-docs score by `{delta_str}` :arrow_up:."
-            )
-        elif delta_pp < 0:
-            lines.append(
-                f"> Merging this PR into {base_ref_label} will **decrease** the"
-                f" with-docs score by `{delta_str}` :arrow_down:."
-            )
-        else:
-            lines.append(
-                f"> Merging this PR into {base_ref_label} will **not change** the with-docs score."
-            )
-        lines.append("")
-
-    # ── Scores table ─────────────────────────────────────────────────────────
-    lines += [
-        "| | Without docs | With docs | Δ&nbsp;(docs&nbsp;−&nbsp;no&nbsp;docs) |",
-        "|:---|:---:|:---:|:---:|",
-        f"| **This PR**"
-        f" | {fmt_score(cur_no['score'], cur_no['correct_answers'], cur_no['num_questions'], cur_no.get('score_std'), cur_no.get('num_candidates', 1))}"
-        f" | {fmt_score(cur_wi['score'], cur_wi['correct_answers'], cur_wi['num_questions'], cur_wi.get('score_std'), cur_wi.get('num_candidates', 1))}"
-        f" | {fmt_delta(cur_wi['score'], cur_no['score'])} |",
-    ]
-
-    if base:
-        base_no = base["without_docs"]
-        base_wi = base["with_docs"]
-        label = f"`{base_ref}`"
-        if base_source == "cached":
-            label += " *(cached)*"
-        elif base_source == "computed":
-            label += " *(computed)*"
-        lines += [
-            f"| **Base ({label})**"
-            f" | {fmt_score(base_no['score'], base_no['correct_answers'], base_no['num_questions'], num_candidates=base_no.get('num_candidates', 1))}"
-            f" | {fmt_score(base_wi['score'], base_wi['correct_answers'], base_wi['num_questions'], num_candidates=base_wi.get('num_candidates', 1))}"
-            f" | {fmt_delta(base_wi['score'], base_no['score'])} |",
-            f"| **Change**"
-            f" | {fmt_delta(cur_no['score'], base_no['score'])}"
-            f" | {fmt_delta(cur_wi['score'], base_wi['score'])}"
-            f" | — |",
-        ]
-
+    # Summary line: PR docs vs base docs.
+    delta_pp = round((pr_res["score"] - base_res["score"]) * 100)
+    delta_str = fmt_delta(pr_res["score"], base_res["score"])
+    if delta_pp > 0:
+        lines.append(
+            f"> Merging this PR will **increase** the with-docs score by `{delta_str}`"
+            f" compared to the base docs :arrow_up:."
+        )
+    elif delta_pp < 0:
+        lines.append(
+            f"> Merging this PR will **decrease** the with-docs score by `{delta_str}`"
+            f" compared to the base docs :arrow_down:."
+        )
+    else:
+        lines.append(
+            "> Merging this PR will **not change** the with-docs score compared to the base docs."
+        )
     lines.append("")
 
-    # ── Per-question expandable block ─────────────────────────────────────────
-    cur_no_answers: list = cur_no.get("answers", [])
-    cur_wi_answers: list = cur_wi.get("answers", [])
+    # Three-row comparison table.
+    lines += [
+        "| | Score | Δ vs. no docs |",
+        "|:---|:---:|:---:|",
+        f"| **Without docs** | {_score_cell(no_res)} | — |",
+        f"| **With base docs** | {_score_cell(base_res)}"
+        f" | {fmt_delta(base_res['score'], no_res['score'])} |",
+        f"| **With PR docs** | {_score_cell(pr_res)}"
+        f" | {fmt_delta(pr_res['score'], no_res['score'])} |",
+        "",
+    ]
 
-    if base:
-        base_no_answers: list = base["without_docs"].get("answers", [])
-        base_wi_answers: list = base["with_docs"].get("answers", [])
-        changed = [
-            (i, b_no, c_no, b_wi, c_wi)
-            for i, (b_no, c_no, b_wi, c_wi) in enumerate(
-                zip(base_no_answers, cur_no_answers, base_wi_answers, cur_wi_answers)
-            )
-            if _answer_score(b_no) != _answer_score(c_no) or _answer_score(b_wi) != _answer_score(c_wi)
-        ]
-        if changed:
-            lines += [
-                "<details>",
-                f"<summary>📋 {len(changed)} question(s) with changed results</summary>",
-                "",
-                "| # | Question | Without docs | With docs |",
-                "|:---|:---|:---:|:---:|",
-            ]
-            for i, b_no, c_no, b_wi, c_wi in changed:
-                q_label = question_label(questions, i)
-                no_change = f"{result_icon(b_no)} → {result_icon(c_no)}"
-                wi_change = f"{result_icon(b_wi)} → {result_icon(c_wi)}"
-                lines.append(f"| {i + 1} | {q_label} | {no_change} | {wi_change} |")
-            lines += ["", "</details>", ""]
-
-    elif cur_no_answers or cur_wi_answers:
-        n = max(len(cur_no_answers), len(cur_wi_answers))
+    # Per-question block: questions where base-docs and PR-docs disagree.
+    base_answers: list = base_res.get("answers", [])
+    pr_answers: list = pr_res.get("answers", [])
+    changed = [
+        (i, b, p)
+        for i, (b, p) in enumerate(zip(base_answers, pr_answers))
+        if _answer_score(b) != _answer_score(p)
+    ]
+    if changed:
         lines += [
             "<details>",
-            "<summary>📋 Per-question results</summary>",
+            f"<summary>📋 {len(changed)} question(s) where base docs and PR docs disagree</summary>",
             "",
-            "| # | Question | Without docs | With docs |",
-            "|:---|:---|:---:|:---:|",
+            "| # | Question | Base docs → PR docs |",
+            "|:---|:---|:---:|",
         ]
-        for i in range(n):
-            c_no = cur_no_answers[i] if i < len(cur_no_answers) else None
-            c_wi = cur_wi_answers[i] if i < len(cur_wi_answers) else None
+        for i, b, p in changed:
             q_label = question_label(questions, i)
-            lines.append(f"| {i + 1} | {q_label} | {result_icon(c_no)} | {result_icon(c_wi)} |")
+            lines.append(f"| {i + 1} | {q_label} | {result_icon(b)} → {result_icon(p)} |")
         lines += ["", "</details>", ""]
-
-    # ── Footer ───────────────────────────────────────────────────────────────
 
     lines += [
         "",
         f"*Model: `{model}` · Questions: `{questions_file}`*",
-        "*Comparing: PR documentation (current) vs. base documentation*",
     ]
 
     return "\n".join(lines)
@@ -190,35 +155,29 @@ def format_comment(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--current", required=True, help="Path to current branch results JSON.")
-    parser.add_argument("--base", help="Path to base branch results JSON.")
+    parser.add_argument("--without-docs", required=True, help="Path to no-docs result JSON.")
+    parser.add_argument(
+        "--with-base-docs", required=True, help="Path to with-base-docs result JSON."
+    )
+    parser.add_argument("--with-docs", required=True, help="Path to with-PR-docs result JSON.")
     parser.add_argument("--questions-file", required=True)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--base-ref", default="base")
-    parser.add_argument(
-        "--base-source",
-        choices=["cached", "computed"],
-        default=None,
-        help="How the base branch results were obtained (for display).",
-    )
     args = parser.parse_args()
 
-    with open(args.current) as f:
-        current = json.load(f)
-
-    base = None
-    if args.base and Path(args.base).exists():
-        with open(args.base) as f:
-            base = json.load(f)
+    with open(args.without_docs) as f:
+        without_docs = json.load(f)
+    with open(args.with_base_docs) as f:
+        with_base_docs = json.load(f)
+    with open(args.with_docs) as f:
+        with_docs = json.load(f)
 
     print(
         format_comment(
-            current=current,
-            base=base,
+            without_docs=without_docs,
+            with_base_docs=with_base_docs,
+            with_docs=with_docs,
             questions_file=args.questions_file,
             model=args.model,
-            base_ref=args.base_ref,
-            base_source=args.base_source,
         )
     )
 

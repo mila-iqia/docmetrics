@@ -1,7 +1,7 @@
 import questionary
 from rich.console import Console
 
-from docmetrics.main import Question
+from docmetrics.objects import Question
 
 console = Console()
 

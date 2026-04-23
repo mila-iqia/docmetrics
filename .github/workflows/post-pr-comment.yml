@@ -33,30 +33,20 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           cd /tmp/docmetrics-artifacts
 
           PR_NUMBER=$(python3 -c "import json; print(json.load(open('docmetrics-metadata.json'))['pr_number'])")
-          BASE_SOURCE=$(python3 -c "import json; print(json.load(open('docmetrics-metadata.json')).get('base_source') or '')")
           QUESTIONS_FILE=$(python3 -c "import json; print(json.load(open('docmetrics-metadata.json'))['questions_file'])")
           MODEL=$(python3 -c "import json; print(json.load(open('docmetrics-metadata.json'))['model'])")
-          BASE_REF=$(python3 -c "import json; print(json.load(open('docmetrics-metadata.json'))['base_ref'])")
-          REPO="${{ github.repository }}"
-
-          BASE_ARGS=""
-          if [ -f "docmetrics-base.json" ]; then
-            BASE_ARGS="--base docmetrics-base.json"
-            if [ -n "$BASE_SOURCE" ]; then
-              BASE_ARGS="$BASE_ARGS --base-source $BASE_SOURCE"
-            fi
-          fi
 
           python3 docmetrics-format_comment.py \
-            --current docmetrics-current.json \
-            $BASE_ARGS \
+            --without-docs docmetrics-without-docs.json \
+            --with-base-docs docmetrics-with-base-docs.json \
+            --with-docs docmetrics-with-docs.json \
             --questions-file "$QUESTIONS_FILE" \
             --model "$MODEL" \
-            --base-ref "$BASE_REF" \
             > /tmp/docmetrics-comment.md
 
           EXISTING_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \

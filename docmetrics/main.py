@@ -1,16 +1,13 @@
 import argparse
-import dataclasses
 import functools
 import json
 import logging
-import math
 import os
 import random
 import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Literal
 
 import httpx
 import pydantic
@@ -21,13 +18,12 @@ import yaml
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from pydantic.dataclasses import dataclass
 
+from docmetrics.objects import EvaluationResult, Letter, Question, QuestionResult, Response
 from docmetrics.quiz import run_quiz
 
 logger = logging.getLogger(__name__)
 
-Letter = Literal["A", "B", "C", "D", "E"]
 
 DUMMY_MODEL = "test:dummy"
 """A model name that returns a random answer without calling any external API."""
@@ -46,86 +42,6 @@ __all__ = [
     "QuestionResult",
     "EvaluationResult",
 ]
-
-
-@dataclass(frozen=True)
-class Question:
-    question: str
-    """The question to ask the LLM."""
-
-    options: dict[Letter, str]
-    """A list of possible answers to the question."""
-
-    answer: Letter
-    """The correct answer to the question (must be one of the letters in `options`)."""
-
-    def __postinit__(self):
-        assert self.answer in self.options, "correct answer isn't in the options!"
-
-
-class Response(pydantic.BaseModel):
-    answer: Letter
-    """The selected answer."""
-
-    # TODO: Check if adding this 'justification' is actually helpful, and whether it increases costs.
-    # Seems like it might just be extra tokens to generate, for our purposes.
-    justification: str = ""
-    """A brief justification for the selected answer."""
-
-
-@dataclasses.dataclass(frozen=True)
-class QuestionResult:
-    expected: Letter
-    """The correct answer letter."""
-
-    runs: tuple[Letter | None, ...]
-    """One selected letter per candidate run (None = unparsable response)."""
-
-    @property
-    def correct_count(self) -> int:
-        return sum(1 for r in self.runs if r == self.expected)
-
-    @property
-    def pass_rate(self) -> float:
-        return self.correct_count / len(self.runs) if self.runs else 0.0
-
-
-@dataclasses.dataclass(frozen=True)
-class EvaluationResult:
-    answers: tuple[QuestionResult, ...]
-    """Per-question results."""
-
-    num_candidates: int = 1
-    """Number of candidate answers requested per question."""
-
-    @property
-    def num_questions(self) -> int:
-        return len(self.answers)
-
-    @property
-    def correct_answers(self) -> int:
-        return sum(r.correct_count for r in self.answers)
-
-    @property
-    def invalid_answers(self) -> int:
-        return sum(1 for r in self.answers for run in r.runs if run is None)
-
-    @property
-    def score(self) -> float:
-        """Mean per-question pass rate."""
-        if not self.answers:
-            return 0.0
-        return sum(r.pass_rate for r in self.answers) / len(self.answers)
-
-    @property
-    def score_std(self) -> float:
-        """Population std-dev of per-question pass rates."""
-        if not self.answers:
-            return 0.0
-        rates = [r.pass_rate for r in self.answers]
-        mean = sum(rates) / len(rates)
-        variance = sum((r - mean) ** 2 for r in rates) / len(rates)
-        return math.sqrt(variance)
 
 
 def main():
@@ -166,6 +82,7 @@ def main():
 
     if args.subcommand == "quiz":
         questions = load_questions(questions_path=args.questions)
+
         run_quiz(questions)
         return
 
@@ -197,9 +114,12 @@ def main():
         num_candidates=num_candidates,
     )
 
-    output_message = (
-        f"Final score for {model=} {context}: {result.score:.1%} ± {result.score_std:.1%} "
-    )
+    if num_candidates > 1:
+        output_message = (
+            f"Final score for {model=} {context}: {result.score:.1%} ± {result.score_std:.1%}"
+        )
+    else:
+        output_message = f"Final score for {model=} {context}: {result.score:.1%}"
     logger.info(output_message)
     if args.output_format == "json":
         print(
@@ -406,7 +326,6 @@ def evaluate_llm(
     docs_files: list[Path] | None = None,
     ollama_url: str = OLLAMA_DEFAULT_URL,
     num_candidates: int = 1,
-    # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
     """Evaluates an LLM on some questions with/without documentation as context.
 
@@ -484,10 +403,8 @@ def load_questions(questions_path: Path) -> list[Question]:
 def ask_question(
     client: genai.Client | None,
     question: Question,
-    # with_docs: bool,
     model: str,
     docs_urls: list[str] | None,
-    # tools: list[types.Tool | Callable] | None,
     docs_content: str | None = None,
     ollama_url: str = OLLAMA_DEFAULT_URL,
     question_index: int | None = None,
@@ -557,7 +474,6 @@ def ask_question(
 def get_agent_answer(
     client: genai.Client,
     model: str,
-    # tools: list[types.Tool | Callable] | None,
     question: Question,
     docs_urls: list[str] | None,
     docs_content: str | None,
@@ -567,7 +483,11 @@ def get_agent_answer(
     logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
     # Adding this gives the LLM the ability to consult URLs given in the prompt.
     # Not needed (or wanted) when docs are already inlined or for Ollama models.
-    tools = [types.Tool(url_context=types.UrlContext())] if docs_urls else None
+    tools = (
+        [types.Tool(url_context=types.UrlContext())]
+        if docs_urls and docs_content is None
+        else None
+    )
     api_response = client.models.generate_content(
         model=model,
         contents=prompt,
@@ -658,7 +578,6 @@ def make_prompt(
     docs_urls: list[str] | None = None,
     docs_content: str | None = None,
 ) -> str:
-    assert bool(docs_content) ^ bool(docs_urls), "can either pass content or a URL ATM, not both."
     preamble = ""
     if docs_content:
         preamble = f"Based on the following documentation:\n\n{docs_content}\n\n"

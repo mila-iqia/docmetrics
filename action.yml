@@ -1,6 +1,8 @@
 name: DocMetrics
 description: >
-  Evaluate documentation quality and post a score comparison comment on pull requests.
+  Evaluate documentation usefulness by scoring an LLM quiz three ways — no docs,
+  with the base docs, and with the proposed PR docs — and post the comparison
+  as a PR comment.
 
 inputs:
   questions-file:
@@ -9,16 +11,17 @@ inputs:
     required: true
   model:
     description: LLM model to use.
-    required: true
+    required: false
     default: gemini-2.5-flash
   docs-url:
     description: >
-      Space-separated list of documentation URLs to use as context for all questions.
-    required: false
+      Space-separated list of documentation URLs for the proposed (PR) docs.
+    required: true
   base-docs-url:
     description: >
-      Documentation URL to use for base branch comparison. Defaults to docs-url if not provided.
-    required: false
+      Space-separated list of documentation URLs for the base / reference docs
+      to compare the PR docs against.
+    required: true
   gemini-api-key:
     description: >
       Google Gemini API key. Required for Gemini models; omit when using
@@ -53,124 +56,90 @@ outputs:
   score-without-docs:
     description: Score when no documentation context is provided (0.0-1.0).
     value: ${{ steps.parse-outputs.outputs.score-without-docs }}
-  score-with-docs:
-    description: Score when the `docs-url`` documentation links are provided in the agent's context (0.0-1.0).
-    value: ${{ steps.parse-outputs.outputs.score-with-docs }}
   score-with-base-docs:
-    description: Score when the `base-docs-url` documentation links are provided in the agent's context (0.0-1.0).
+    description: Score when the `base-docs-url` documentation links are provided as context (0.0-1.0).
     value: ${{ steps.parse-outputs.outputs.score-with-base-docs }}
+  score-with-docs:
+    description: Score when the `docs-url` documentation links are provided as context (0.0-1.0).
+    value: ${{ steps.parse-outputs.outputs.score-with-docs }}
 
 runs:
   using: composite
   steps:
     - name: Set up Python
+      if: github.event_name == 'pull_request'
       uses: actions/setup-python@v5
       with:
         python-version: "3.14"
 
     - name: Install docmetrics
+      if: github.event_name == 'pull_request'
       shell: bash
       run: pip install --force-reinstall "${{ github.action_path }}"
 
-    - name: Run docmetrics on current branch (without docs)
-      id: run-current
-      shell: bash
-      env:
-        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-      run: |
-        python -m docmetrics \
-          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
-          --model "${{ inputs.model }}" \
-          --ollama-url "${{ inputs.ollama-url }}" \
-          --num-candidates "${{ inputs.num-candidates }}" \
-          --output-format json \
-          | tee /tmp/docmetrics-current-without-docs.json
-
-    - name: Run docmetrics on current branch (with docs)
-      id: run-current
-      shell: bash
-      if: inputs.docs-url != ''
-      env:
-        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-      run: |
-        python -m docmetrics \
-          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
-          --model "${{ inputs.model }}" \
-          --ollama-url "${{ inputs.ollama-url }}" \
-          --num-candidates "${{ inputs.num-candidates }}" \
-          --output-format json \
-          ${{ inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '' }} \
-          | tee /tmp/docmetrics-current-with-docs.json
-
-    - name: Prepare base branch comparison
-      id: prep-base
+    - name: Run docmetrics (no docs)
+      id: run-without-docs
       if: github.event_name == 'pull_request'
       shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
-        git fetch origin "${{ github.base_ref }}" --depth=1
+        python -m docmetrics \
+          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
+          --model "${{ inputs.model }}" \
+          --ollama-url "${{ inputs.ollama-url }}" \
+          --num-candidates "${{ inputs.num-candidates }}" \
+          --output-format json \
+          | tee /tmp/docmetrics-without-docs.json
 
-        if git show "origin/${{ github.base_ref }}:${{ inputs.questions-file }}" \
-            > /tmp/base-questions.yaml 2>/dev/null; then
-          BASE_HASH=$(sha256sum /tmp/base-questions.yaml | cut -d' ' -f1)
-          # Sanitize the ref so it is safe to use as a cache key component.
-          BASE_REF_SAFE=$(echo "${{ github.base_ref }}" | tr '/' '-')
-          echo "cache-key=docmetrics-${BASE_REF_SAFE}-${BASE_HASH}-${{ inputs.model }}-nc${{ inputs.num-candidates }}" \
-            >> "$GITHUB_OUTPUT"
-          echo "has-base-questions=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "Questions file not found on base branch; skipping comparison." >&2
-          echo "has-base-questions=false" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Restore base branch cache
-      id: cache-restore
-      if: github.event_name == 'pull_request' && steps.prep-base.outputs.has-base-questions == 'true'
-      uses: actions/cache/restore@v4
-      with:
-        path: /tmp/docmetrics-base.json
-        key: ${{ steps.prep-base.outputs.cache-key }}
-
-    - name: Run docmetrics on base branch with base docs urls (cache miss)
-      if: >-
-        github.event_name == 'pull_request' &&
-        steps.prep-base.outputs.has-base-questions == 'true' &&
-        steps.cache-restore.outputs.cache-hit != 'true'
+    - name: Run docmetrics (base docs)
+      id: run-with-base-docs
+      if: github.event_name == 'pull_request'
       shell: bash
       env:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
         python -m docmetrics \
-          --questions /tmp/base-questions.yaml \
+          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
           --ollama-url "${{ inputs.ollama-url }}" \
           --num-candidates "${{ inputs.num-candidates }}" \
           --output-format json \
-          ${{ inputs.base-docs-url && format('--docs-url {0}', inputs.base-docs-url) || (inputs.docs-url && format('--docs-url {0}', inputs.docs-url) || '') }} \
-          | tee /tmp/docmetrics-base.json
+          --docs-url ${{ inputs.base-docs-url }} \
+          | tee /tmp/docmetrics-with-base-docs.json
 
-    - name: Save base branch cache
-      if: >-
-        github.event_name == 'pull_request' &&
-        steps.prep-base.outputs.has-base-questions == 'true' &&
-        steps.cache-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        path: /tmp/docmetrics-base.json
-        key: ${{ steps.prep-base.outputs.cache-key }}
+    - name: Run docmetrics (PR docs)
+      id: run-with-docs
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+      run: |
+        python -m docmetrics \
+          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
+          --model "${{ inputs.model }}" \
+          --ollama-url "${{ inputs.ollama-url }}" \
+          --num-candidates "${{ inputs.num-candidates }}" \
+          --output-format json \
+          --docs-url ${{ inputs.docs-url }} \
+          | tee /tmp/docmetrics-with-docs.json
 
     - name: Parse step outputs
       id: parse-outputs
+      if: github.event_name == 'pull_request'
       shell: bash
       run: |
         python3 - <<'EOF'
         import json, os
-        with open("/tmp/docmetrics-current-with-docs.json") as f:
-            with_docs = json.load(f)
-        with open("/tmp/docmetrics-current-without-docs.json") as f:
-            without_docs = json.load(f)
-        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-            out.write(f"score-with-docs={with_docs['score']}\n")
-            out.write(f"score-without-docs={without_docs['score']}\n")
+        for name, path in [
+            ("score-without-docs", "/tmp/docmetrics-without-docs.json"),
+            ("score-with-base-docs", "/tmp/docmetrics-with-base-docs.json"),
+            ("score-with-docs", "/tmp/docmetrics-with-docs.json"),
+        ]:
+            with open(path) as f:
+                data = json.load(f)
+            with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                out.write(f"{name}={data['result']['score']}\n")
         EOF
 
     - name: Write PR comment artifacts
@@ -180,36 +149,22 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         QUESTIONS_FILE: ${{ inputs.questions-file }}
         MODEL: ${{ inputs.model }}
-        BASE_REF: ${{ github.base_ref }}
-        CACHE_HIT: ${{ steps.cache-restore.outputs.cache-hit }}
       run: |
         python3 - <<'PYEOF'
         import json, os
-        cache_hit = os.environ.get("CACHE_HIT", "") == "true"
-        has_base = os.path.exists("/tmp/docmetrics-base.json")
-        if cache_hit:
-            base_source = "cached"
-        elif has_base:
-            base_source = "computed"
-        else:
-            base_source = None
         metadata = {
             "pr_number": int(os.environ["PR_NUMBER"]),
-            "base_source": base_source,
             "questions_file": os.environ["QUESTIONS_FILE"],
             "model": os.environ["MODEL"],
-            "base_ref": os.environ["BASE_REF"],
         }
         workspace = os.environ["GITHUB_WORKSPACE"]
         with open(os.path.join(workspace, "docmetrics-metadata.json"), "w") as f:
             json.dump(metadata, f)
         PYEOF
 
-        cp /tmp/docmetrics-current-with-docs.json "$GITHUB_WORKSPACE/docmetrics-current-with-docs.json"
-        cp /tmp/docmetrics-current-without-docs.json "$GITHUB_WORKSPACE/docmetrics-current-without-docs.json"
-        if [ -f /tmp/docmetrics-base.json ]; then
-          cp /tmp/docmetrics-base.json "$GITHUB_WORKSPACE/docmetrics-base.json"
-        fi
+        cp /tmp/docmetrics-without-docs.json "$GITHUB_WORKSPACE/docmetrics-without-docs.json"
+        cp /tmp/docmetrics-with-base-docs.json "$GITHUB_WORKSPACE/docmetrics-with-base-docs.json"
+        cp /tmp/docmetrics-with-docs.json "$GITHUB_WORKSPACE/docmetrics-with-docs.json"
         cp "${{ github.action_path }}/.github/scripts/format_comment.py" \
            "$GITHUB_WORKSPACE/docmetrics-format_comment.py"
 
@@ -219,23 +174,12 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
-        BASE_ARGS=""
-        if [ -f /tmp/docmetrics-base.json ]; then
-          BASE_ARGS="--base /tmp/docmetrics-base.json"
-          if [ "${{ steps.cache-restore.outputs.cache-hit }}" == "true" ]; then
-            BASE_ARGS="$BASE_ARGS --base-source cached"
-          else
-            BASE_ARGS="$BASE_ARGS --base-source computed"
-          fi
-        fi
-
         python3 "${{ github.action_path }}/.github/scripts/format_comment.py" \
-          --current-with-docs /tmp/docmetrics-current-with-docs.json \
-          --current-without-docs /tmp/docmetrics-current-without-docs.json \
-          $BASE_ARGS \
+          --without-docs /tmp/docmetrics-without-docs.json \
+          --with-base-docs /tmp/docmetrics-with-base-docs.json \
+          --with-docs /tmp/docmetrics-with-docs.json \
           --questions-file "${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
-          --base-ref "${{ github.base_ref }}" \
           > /tmp/docmetrics-comment.md
 
         PR_NUMBER="${{ github.event.pull_request.number }}"
