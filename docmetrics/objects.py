@@ -4,7 +4,8 @@ from typing import Literal
 import pydantic
 from pydantic.dataclasses import dataclass
 
-Letter = Literal["A", "B", "C", "D", "E"]
+# Can use up to 10 choices per question (to make the quiz harder perhaps).
+Letter = Literal["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
 
 
 @dataclass(frozen=True)

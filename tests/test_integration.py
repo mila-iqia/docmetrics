@@ -65,6 +65,7 @@ def mila_docs_url(tmp_path_factory: pytest.TempPathFactory):
     return
 
 
+@pytest.mark.slow
 @integration
 @pytest.mark.parametrize("seed", [42])
 @pytest.mark.parametrize("num_questions", [5])

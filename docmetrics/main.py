@@ -359,11 +359,12 @@ def evaluate_llm(
 
     # TODO: Group questions based on the docs pages they require and use the batch API
     # to ask multiple questions at once with the same context.
-
+    with_docs = docs_urls or docs_files
     answer_results: list[QuestionResult] = []
     progress_bar = tqdm.tqdm(
         total=num_questions * num_candidates,
-        disable=not sys.stdout.isatty(),
+        disable=not sys.stderr.isatty(),
+        file=sys.stderr,
         desc=f"Evaluating {model} ({'with' if with_docs else 'without'} docs)",
         unit="question",
     )
