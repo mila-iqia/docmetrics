@@ -35,24 +35,24 @@ class Response(pydantic.BaseModel):
 
 @dataclass(frozen=True)
 class QuestionResult:
-    expected: Letter
-    """The correct answer letter."""
+    question: Question
+    """The question that was asked."""
 
     runs: tuple[Letter | None, ...]
     """One selected letter per candidate run (None = unparsable response)."""
 
     @property
     def correct_count(self) -> int:
-        return sum(1 for r in self.runs if r == self.expected)
+        return sum(r == self.question.answer for r in self.runs)
 
     @property
     def pass_rate(self) -> float:
         return self.correct_count / len(self.runs) if self.runs else 0.0
 
 
-@dataclass(frozen=True)
-class EvaluationResult:
-    answers: tuple[QuestionResult, ...]
+# @dataclass(frozen=True)
+class EvaluationResult(pydantic.BaseModel):
+    question_results: tuple[QuestionResult, ...]
     """Per-question results."""
 
     num_candidates: int = 1
@@ -60,29 +60,29 @@ class EvaluationResult:
 
     @property
     def num_questions(self) -> int:
-        return len(self.answers)
+        return len(self.question_results)
 
     @property
     def correct_answers(self) -> int:
-        return sum(r.correct_count for r in self.answers)
+        return sum(r.correct_count for r in self.question_results)
 
     @property
     def invalid_answers(self) -> int:
-        return sum(1 for r in self.answers for run in r.runs if run is None)
+        return sum(1 for r in self.question_results for run in r.runs if run is None)
 
     @property
     def score(self) -> float:
         """Mean per-question pass rate."""
-        if not self.answers:
+        if not self.question_results:
             return 0.0
-        return sum(r.pass_rate for r in self.answers) / len(self.answers)
+        return sum(r.pass_rate for r in self.question_results) / len(self.question_results)
 
     @property
     def score_std(self) -> float:
         """Population std-dev of per-question pass rates."""
-        if not self.answers:
+        if not self.question_results:
             return 0.0
-        rates = [r.pass_rate for r in self.answers]
+        rates = [r.pass_rate for r in self.question_results]
         mean = sum(rates) / len(rates)
         variance = sum((r - mean) ** 2 for r in rates) / len(rates)
         return math.sqrt(variance)

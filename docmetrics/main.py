@@ -48,23 +48,53 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="count")
     # Evaluate args on the top-level parser so `docmetrics` (no subcommand) works.
-    _add_evaluate_args(parser, questions_required=False)
-
-    subparsers = parser.add_subparsers(dest="subcommand")
-
-    evaluate_parser = subparsers.add_parser(
-        "evaluate",
-        help="Evaluate an LLM on documentation questions (default when no subcommand is given).",
+    parser.add_argument(
+        "questions",
+        type=Path,
+        help="Path to the YAML file containing the questions to ask the LLM. "
+        "See the sample_questions.yaml file for an example.",
     )
-    evaluate_parser.add_argument("-v", "--verbose", action="count")
-    _add_evaluate_args(evaluate_parser)
-
-    quiz_parser = subparsers.add_parser(
-        "quiz",
-        help="Take the quiz interactively in the terminal.",
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gemini-2.5-flash",
+        help='LLM model to use (e.g. "gemini-2.5-flash", "ollama:qwen3-coder-next:latest"). Use "test:dummy" for random answers without any API calls.',
     )
-    quiz_parser.add_argument("-v", "--verbose", action="count")
-    quiz_parser.add_argument("--questions", type=Path, required=True)
+    parser.add_argument(
+        "--docs-url",
+        nargs="*",
+        default=None,
+        help="URLs to documentation pages that will be used as context for all questions.",
+    )
+    parser.add_argument(
+        "--docs-file",
+        nargs="*",
+        type=Path,
+        default=None,
+        help="Local file paths whose content will be inlined into the prompt as documentation context.",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        type=str,
+        default=OLLAMA_DEFAULT_URL,
+        help=f"Base URL of the Ollama server (default: {OLLAMA_DEFAULT_URL}). Only used with 'ollama:' models.",
+    )
+    parser.add_argument(
+        "--num-candidates",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of times to ask each question. Scores are averaged across candidates. (default: 1)",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
+    )
+    parser.add_argument(
+        "--interactive", action="store_true", help="Take the quiz interactively in the terminal."
+    )
 
     args = parser.parse_args()
     verbose: int = args.verbose or 0
@@ -80,17 +110,12 @@ def main():
         logging.DEBUG if verbose >= 2 else logging.INFO if verbose == 1 else logging.WARNING
     )
 
-    if args.subcommand == "quiz":
-        questions = load_questions(questions_path=args.questions)
+    questions = load_questions(questions_path=args.questions)
 
+    if args.interactive:
         run_quiz(questions)
         return
 
-    # Default: evaluate (subcommand is None or "evaluate")
-    if args.questions is None:
-        parser.error("the following arguments are required: --questions")
-
-    questions = load_questions(questions_path=args.questions)
     model: str = args.model
     docs_urls: list[str] | None = args.docs_url if args.docs_url else None
     docs_files: list[Path] | None = args.docs_file if args.docs_file else None
@@ -122,201 +147,9 @@ def main():
         output_message = f"Final score for {model=} {context}: {result.score:.1%}"
     logger.info(output_message)
     if args.output_format == "json":
-        print(
-            json.dumps(
-                {
-                    "questions": [{"question": q.question} for q in questions],
-                    "result": _serialize_evaluation_result(result),
-                }
-            )
-        )
+        print(result.model_dump_json(indent=2))
     else:
         print(output_message)
-
-
-@functools.cache
-def get_google_genai_client():
-    load_dotenv()  # reads variables from a .env file and sets them in os.environ
-    # The client gets the API key from the environment variable `GEMINI_API_KEY`.
-    return genai.Client()
-
-
-def _is_ollama_model(model: str) -> bool:
-    return model.startswith(OLLAMA_PREFIX)
-
-
-def _ollama_model_name(model: str) -> str:
-    """Strips the 'ollama:' prefix to get the bare model name.
-
-    >>> _ollama_model_name("ollama:qwen3-coder-next:latest")
-    'qwen3-coder-next:latest'
-    """
-    return model.removeprefix(OLLAMA_PREFIX)
-
-
-@functools.cache
-def _get_ollama_client(base_url: str = OLLAMA_DEFAULT_URL):
-    load_dotenv()  # read the OLLAMA_API_KEY from the .env file if present.
-    import ollama
-
-    return ollama.Client(
-        host=base_url,
-        headers={"Authorization": "Bearer " + OLLAMA_API_KEY}
-        if (OLLAMA_API_KEY := os.environ.get("OLLAMA_API_KEY"))
-        else None,
-    )
-
-
-def _is_local_url(url: str) -> bool:
-    from urllib.parse import urlparse
-
-    return urlparse(url).hostname in ("localhost", "127.0.0.1", "::1")
-
-
-def _is_allowed_docs_url(url: str, docs_urls: list[str]) -> bool:
-    """Returns True if `url` is under at least one of the given docs base URLs."""
-    for base in docs_urls:
-        base = base.rstrip("/")
-        if url == base or url.startswith(base + "/"):
-            return True
-    return False
-
-
-def _fetch_url(url: str) -> str:
-    """Fetch URL content via httpx, stripping HTML tags if the response is HTML."""
-    response = httpx.get(url, follow_redirects=True, timeout=30)
-    response.raise_for_status()
-    if "html" not in response.headers.get("content-type", ""):
-        return response.text
-    from html.parser import HTMLParser
-
-    class _Extractor(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self._parts: list[str] = []
-            self._skip = False
-
-        def handle_starttag(self, tag, attrs):
-            if tag in ("script", "style"):
-                self._skip = True
-
-        def handle_endtag(self, tag):
-            if tag in ("script", "style"):
-                self._skip = False
-
-        def handle_data(self, data):
-            if not self._skip and (stripped := data.strip()):
-                self._parts.append(stripped)
-
-    ex = _Extractor()
-    ex.feed(response.text)
-    return "\n".join(ex._parts)
-
-
-def _get_agent_answer_ollama(
-    model: str,
-    prompt: str,
-    ollama_url: str = OLLAMA_DEFAULT_URL,
-    use_web_fetch: bool = False,
-    docs_urls: list[str] | None = None,
-) -> "Response | None":
-    client = _get_ollama_client(ollama_url)
-    ollama_model = _ollama_model_name(model)
-    schema = Response.model_json_schema()
-    full_prompt = (
-        prompt
-        + f"\nRespond with a JSON object matching this schema: {json.dumps(schema)}\n"
-        + 'Example: {"answer": "A", "justification": "Because..."}'
-    )
-
-    messages: list = [{"role": "user", "content": full_prompt}]
-    tools = [client.web_fetch] if use_web_fetch else None
-
-    import ollama as _ollama
-
-    tool_call_count = 0
-    while True:
-        try:
-            response = client.chat(
-                model=ollama_model,
-                messages=messages,
-                tools=tools,
-                format="json" if not tools else None,
-            )
-        except _ollama.ResponseError as e:
-            logger.warning(f"Ollama returned an error (invalid tool call?): {e}")
-            return None
-        messages.append(response.message)
-
-        if not response.message.tool_calls:
-            content = response.message.content
-            if not content:
-                return None
-            try:
-                return Response.model_validate_json(content)
-            except pydantic.ValidationError:
-                return parse_response_fallback(content)
-
-        tool_call_count += len(response.message.tool_calls)
-        if tool_call_count > MAX_TOOL_CALLS:
-            logger.warning(
-                f"Exceeded maximum tool calls ({MAX_TOOL_CALLS}), asking for a final answer."
-            )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "You have reached the maximum number of tool calls. "
-                        "Based on the information gathered so far, please provide your final answer now. "
-                        f"Respond with a JSON object matching this schema: {json.dumps(schema)}\n"
-                        'Example: {"answer": "A", "justification": "Because..."}'
-                    ),
-                }
-            )
-            try:
-                final_response = client.chat(
-                    model=ollama_model,
-                    messages=messages,
-                    format="json",
-                )
-            except _ollama.ResponseError as e:
-                logger.warning(f"Ollama returned an error on final answer request: {e}")
-                return None
-            content = final_response.message.content
-            if not content:
-                return None
-            try:
-                return Response.model_validate_json(content)
-            except pydantic.ValidationError:
-                return parse_response_fallback(content)
-
-        for tool_call in response.message.tool_calls:
-            if tool_call.function.name == "web_fetch":
-                url = tool_call.function.arguments.get("url", "")
-                if docs_urls and not _is_allowed_docs_url(url, docs_urls):
-                    logger.warning(f"LLM requested disallowed URL (blocked): {url}")
-                    content = (
-                        f"Access denied: {url!r} is not under the allowed documentation URLs."
-                    )
-                else:
-                    logger.info(f"LLM fetching documentation URL: {url}")
-                    use_ollama_fetch = bool(
-                        os.environ.get("OLLAMA_API_KEY")
-                    ) and not _is_local_url(url)
-                    try:
-                        if use_ollama_fetch:
-                            content = str(client.web_fetch(**tool_call.function.arguments))
-                        else:
-                            content = _fetch_url(url)
-                    except Exception as e:
-                        logger.warning(f"web_fetch failed for {url}: {e}")
-                        content = f"Error fetching URL: {e}"
-            else:
-                logger.warning(f"LLM requested unknown tool: {tool_call.function.name}")
-                content = f"Tool {tool_call.function.name} not found"
-            messages.append(
-                {"role": "tool", "content": content, "tool_name": tool_call.function.name}
-            )
 
 
 def evaluate_llm(
@@ -389,12 +222,12 @@ def evaluate_llm(
             progress_bar.update(1)
             score_so_far += 1 if selected == question.answer else 0
             total += 1
-            progress_bar.set_postfix(score=f"{score_so_far / total:.2%}")
-        answer_results.append(QuestionResult(expected=question.answer, runs=tuple(runs)))
+            progress_bar.set_postfix(score_so_far=f"{score_so_far / total:.2%}")
+        answer_results.append(QuestionResult(question=question, runs=tuple(runs)))
     logger.info(
         f"Final score for {model} ({'with' if with_docs else 'without'} docs): {score_so_far}/{total} = {score_so_far / total:.2%}"
     )
-    return EvaluationResult(answers=tuple(answer_results), num_candidates=num_candidates)
+    return EvaluationResult(question_results=tuple(answer_results), num_candidates=num_candidates)
 
 
 def load_questions(questions_path: Path) -> list[Question]:
@@ -593,9 +426,194 @@ def make_prompt(
     )
 
 
+@functools.cache
+def get_google_genai_client():
+    load_dotenv()  # reads variables from a .env file and sets them in os.environ
+    # The client gets the API key from the environment variable `GEMINI_API_KEY`.
+    return genai.Client()
+
+
+def _is_ollama_model(model: str) -> bool:
+    return model.startswith(OLLAMA_PREFIX)
+
+
+def _ollama_model_name(model: str) -> str:
+    """Strips the 'ollama:' prefix to get the bare model name.
+
+    >>> _ollama_model_name("ollama:qwen3-coder-next:latest")
+    'qwen3-coder-next:latest'
+    """
+    return model.removeprefix(OLLAMA_PREFIX)
+
+
+@functools.cache
+def _get_ollama_client(base_url: str = OLLAMA_DEFAULT_URL):
+    load_dotenv()  # read the OLLAMA_API_KEY from the .env file if present.
+    import ollama
+
+    return ollama.Client(
+        host=base_url,
+        headers={"Authorization": "Bearer " + OLLAMA_API_KEY}
+        if (OLLAMA_API_KEY := os.environ.get("OLLAMA_API_KEY"))
+        else None,
+    )
+
+
+def _is_local_url(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    return urlparse(url).hostname in ("localhost", "127.0.0.1", "::1")
+
+
+def _is_allowed_docs_url(url: str, docs_urls: list[str]) -> bool:
+    """Returns True if `url` is under at least one of the given docs base URLs."""
+    for base in docs_urls:
+        base = base.rstrip("/")
+        if url == base or url.startswith(base + "/"):
+            return True
+    return False
+
+
+def _fetch_url(url: str) -> str:
+    """Fetch URL content via httpx, stripping HTML tags if the response is HTML."""
+    response = httpx.get(url, follow_redirects=True, timeout=30)
+    response.raise_for_status()
+    if "html" not in response.headers.get("content-type", ""):
+        return response.text
+    from html.parser import HTMLParser
+
+    class _Extractor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self._parts: list[str] = []
+            self._skip = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style"):
+                self._skip = True
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style"):
+                self._skip = False
+
+        def handle_data(self, data):
+            if not self._skip and (stripped := data.strip()):
+                self._parts.append(stripped)
+
+    ex = _Extractor()
+    ex.feed(response.text)
+    return "\n".join(ex._parts)
+
+
+def _get_agent_answer_ollama(
+    model: str,
+    prompt: str,
+    ollama_url: str = OLLAMA_DEFAULT_URL,
+    use_web_fetch: bool = False,
+    docs_urls: list[str] | None = None,
+) -> "Response | None":
+    client = _get_ollama_client(ollama_url)
+    ollama_model = _ollama_model_name(model)
+    schema = Response.model_json_schema()
+    full_prompt = (
+        prompt
+        + f"\nRespond with a JSON object matching this schema: {json.dumps(schema)}\n"
+        + 'Example: {"answer": "A", "justification": "Because..."}'
+    )
+
+    messages: list = [{"role": "user", "content": full_prompt}]
+    tools = [client.web_fetch] if use_web_fetch else None
+
+    import ollama as _ollama
+
+    tool_call_count = 0
+    while True:
+        try:
+            response = client.chat(
+                model=ollama_model,
+                messages=messages,
+                tools=tools,
+                format="json" if not tools else None,
+            )
+        except _ollama.ResponseError as e:
+            logger.warning(f"Ollama returned an error (invalid tool call?): {e}")
+            return None
+        messages.append(response.message)
+
+        if not response.message.tool_calls:
+            content = response.message.content
+            if not content:
+                return None
+            try:
+                return Response.model_validate_json(content)
+            except pydantic.ValidationError:
+                return parse_response_fallback(content)
+
+        tool_call_count += len(response.message.tool_calls)
+        if tool_call_count > MAX_TOOL_CALLS:
+            logger.warning(
+                f"Exceeded maximum tool calls ({MAX_TOOL_CALLS}), asking for a final answer."
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "You have reached the maximum number of tool calls. "
+                        "Based on the information gathered so far, please provide your final answer now. "
+                        f"Respond with a JSON object matching this schema: {json.dumps(schema)}\n"
+                        'Example: {"answer": "A", "justification": "Because..."}'
+                    ),
+                }
+            )
+            try:
+                final_response = client.chat(
+                    model=ollama_model,
+                    messages=messages,
+                    format="json",
+                )
+            except _ollama.ResponseError as e:
+                logger.warning(f"Ollama returned an error on final answer request: {e}")
+                return None
+            content = final_response.message.content
+            if not content:
+                return None
+            try:
+                return Response.model_validate_json(content)
+            except pydantic.ValidationError:
+                return parse_response_fallback(content)
+
+        for tool_call in response.message.tool_calls:
+            if tool_call.function.name == "web_fetch":
+                url = tool_call.function.arguments.get("url", "")
+                if docs_urls and not _is_allowed_docs_url(url, docs_urls):
+                    logger.warning(f"LLM requested disallowed URL (blocked): {url}")
+                    content = (
+                        f"Access denied: {url!r} is not under the allowed documentation URLs."
+                    )
+                else:
+                    logger.info(f"LLM fetching documentation URL: {url}")
+                    use_ollama_fetch = bool(
+                        os.environ.get("OLLAMA_API_KEY")
+                    ) and not _is_local_url(url)
+                    try:
+                        if use_ollama_fetch:
+                            content = str(client.web_fetch(**tool_call.function.arguments))
+                        else:
+                            content = _fetch_url(url)
+                    except Exception as e:
+                        logger.warning(f"web_fetch failed for {url}: {e}")
+                        content = f"Error fetching URL: {e}"
+            else:
+                logger.warning(f"LLM requested unknown tool: {tool_call.function.name}")
+                content = f"Tool {tool_call.function.name} not found"
+            messages.append(
+                {"role": "tool", "content": content, "tool_name": tool_call.function.name}
+            )
+
+
 def _serialize_evaluation_result(result: EvaluationResult) -> dict:
     answers_out = []
-    for qr in result.answers:
+    for qr in result.question_results:
         if result.num_candidates == 1:
             selected = qr.runs[0] if qr.runs else None
             answers_out.append(
@@ -624,48 +642,6 @@ def _serialize_evaluation_result(result: EvaluationResult) -> dict:
         out["num_candidates"] = result.num_candidates
         out["score_std"] = result.score_std
     return out
-
-
-def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = True) -> None:
-    p.add_argument("--questions", type=Path, required=questions_required)
-    p.add_argument(
-        "--model",
-        type=str,
-        default="gemini-2.5-flash",
-        help='LLM model to use (e.g. "gemini-2.5-flash", "ollama:qwen3-coder-next:latest"). Use "test:dummy" for random answers without any API calls.',
-    )
-    p.add_argument(
-        "--docs-url",
-        nargs="*",
-        default=None,
-        help="URLs to documentation pages that will be used as context for all questions.",
-    )
-    p.add_argument(
-        "--docs-file",
-        nargs="*",
-        type=Path,
-        default=None,
-        help="Local file paths whose content will be inlined into the prompt as documentation context.",
-    )
-    p.add_argument(
-        "--ollama-url",
-        type=str,
-        default=OLLAMA_DEFAULT_URL,
-        help=f"Base URL of the Ollama server (default: {OLLAMA_DEFAULT_URL}). Only used with 'ollama:' models.",
-    )
-    p.add_argument(
-        "--num-candidates",
-        type=int,
-        default=1,
-        metavar="N",
-        help="Number of times to ask each question. Scores are averaged across candidates. (default: 1)",
-    )
-    p.add_argument(
-        "--output-format",
-        choices=["text", "json"],
-        default="text",
-        help="Output format. 'json' emits a machine-readable JSON object suitable for CI pipelines.",
-    )
 
 
 if __name__ == "__main__":
