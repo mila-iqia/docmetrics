@@ -46,6 +46,10 @@ class QuestionResult:
         return sum(r == self.question.answer for r in self.runs)
 
     @property
+    def incorrect_count(self) -> int:
+        return sum(r != self.question.answer for r in self.runs)
+
+    @property
     def pass_rate(self) -> float:
         return self.correct_count / len(self.runs) if self.runs else 0.0
 
@@ -58,18 +62,27 @@ class EvaluationResult(pydantic.BaseModel):
     num_candidates: int = 1
     """Number of candidate answers requested per question."""
 
+    @pydantic.computed_field
     @property
     def num_questions(self) -> int:
         return len(self.question_results)
 
+    @pydantic.computed_field
     @property
     def correct_answers(self) -> int:
         return sum(r.correct_count for r in self.question_results)
 
+    @pydantic.computed_field
+    @property
+    def incorrect_answers(self) -> int:
+        return sum(r.incorrect_count for r in self.question_results)
+
+    @pydantic.computed_field
     @property
     def invalid_answers(self) -> int:
         return sum(1 for r in self.question_results for run in r.runs if run is None)
 
+    @pydantic.computed_field
     @property
     def score(self) -> float:
         """Mean per-question pass rate."""
@@ -77,6 +90,7 @@ class EvaluationResult(pydantic.BaseModel):
             return 0.0
         return sum(r.pass_rate for r in self.question_results) / len(self.question_results)
 
+    @pydantic.computed_field
     @property
     def score_std(self) -> float:
         """Population std-dev of per-question pass rates."""
