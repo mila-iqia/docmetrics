@@ -416,7 +416,11 @@ def make_prompt(
     if docs_content:
         preamble = f"Based on the following documentation:\n\n{docs_content}\n\n"
     elif docs_urls:
-        preamble = "Based on this documentation: " + ", ".join(docs_urls) + ",\n"
+        preamble = (
+            "Based on this documentation: "
+            + ", ".join(docs_urls)
+            + " (and any of their subpages),\n"
+        )
     return (
         preamble
         + "Select the correct answer to the following question:\n"
@@ -609,39 +613,6 @@ def _get_agent_answer_ollama(
             messages.append(
                 {"role": "tool", "content": content, "tool_name": tool_call.function.name}
             )
-
-
-def _serialize_evaluation_result(result: EvaluationResult) -> dict:
-    answers_out = []
-    for qr in result.question_results:
-        if result.num_candidates == 1:
-            selected = qr.runs[0] if qr.runs else None
-            answers_out.append(
-                {
-                    "expected": qr.expected,
-                    "selected": selected,
-                    "correct": (selected == qr.expected) if selected is not None else None,
-                }
-            )
-        else:
-            answers_out.append(
-                {
-                    "expected": qr.expected,
-                    "pass_rate": qr.pass_rate,
-                    "selected": list(qr.runs),
-                }
-            )
-    out: dict = {
-        "num_questions": result.num_questions,
-        "correct_answers": result.correct_answers,
-        "invalid_answers": result.invalid_answers,
-        "score": result.score,
-        "answers": answers_out,
-    }
-    if result.num_candidates > 1:
-        out["num_candidates"] = result.num_candidates
-        out["score_std"] = result.score_std
-    return out
 
 
 if __name__ == "__main__":
