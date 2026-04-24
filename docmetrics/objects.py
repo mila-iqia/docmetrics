@@ -50,6 +50,14 @@ class QuestionResult:
         return sum(r != self.question.answer for r in self.runs)
 
     @property
+    def invalid_count(self) -> int:
+        return sum(r is None for r in self.runs)
+
+    @property
+    def total(self) -> int:
+        return len(self.runs)
+
+    @property
     def pass_rate(self) -> float:
         return self.correct_count / len(self.runs) if self.runs else 0.0
 
@@ -100,3 +108,11 @@ class EvaluationResult(pydantic.BaseModel):
         mean = sum(rates) / len(rates)
         variance = sum((r - mean) ** 2 for r in rates) / len(rates)
         return math.sqrt(variance)
+
+    @property
+    def answers(self) -> list[tuple[Letter | None, ...]]:
+        return [question.runs for question in self.question_results]
+
+    @property
+    def questions(self) -> list[Question]:
+        return [qr.question for qr in self.question_results]

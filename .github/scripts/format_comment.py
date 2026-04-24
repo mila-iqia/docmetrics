@@ -8,9 +8,86 @@ doc-providing runs: with-PR-docs − with-base-docs.
 
 import argparse
 import json
+import math
+import textwrap
+
+from docmetrics.objects import EvaluationResult, QuestionResult
 
 
-def fmt_score(
+def format_comment(
+    without_docs: EvaluationResult,
+    with_base_docs: EvaluationResult,
+    with_docs: EvaluationResult,
+    questions_file: str,
+    model: str,
+) -> str:
+    """Return the full Markdown body for the PR comment."""
+    # NOTE: We only use the quiz in the PR. No need to worry about the questions changing.
+    # _questions = [qr.question for qr in with_base_docs.question_results]
+
+    lines: list[str] = ["<!-- docmetrics -->", "## DocMetrics Report", ""]
+
+    # Summary line: PR docs vs base docs.
+    delta_pp = with_docs.score - with_base_docs.score
+    delta_std = math.sqrt(with_docs.score_std**2 + with_base_docs.score_std**2)
+    if delta_pp > 0:
+        lines.append(
+            f"> Merging this PR will **increase** the with-docs score by {delta_pp:.1%}±{delta_std:.1%}"
+            f" compared to the base docs :arrow_up:."
+        )
+    elif delta_pp < 0:
+        lines.append(
+            f"> Merging this PR will **decrease** the with-docs score by {delta_pp:.1%}±{delta_std:.1%}"
+            f" compared to the base docs :arrow_down:."
+        )
+    else:
+        lines.append(
+            "> Merging this PR will **not change** the with-docs score compared to the base docs."
+        )
+    lines.append("")
+
+    # Three-row comparison table.
+    lines += [
+        "| | Score | Δ vs. no docs |",
+        "|:---|:---:|:---:|",
+        f"| **Without docs**   | {_score_cell(without_docs)} | — |",
+        f"| **With base docs** | {_score_cell(with_base_docs)} | {_fmt_delta(with_base_docs, without_docs)} |",
+        f"| **With PR docs**   | {_score_cell(with_docs)} | {_fmt_delta(with_docs, without_docs)} |",
+        "",
+    ]
+    if with_docs.answers != with_base_docs.answers:
+        num_changed = sum(
+            set(q_a.runs) != set(q_b.runs)
+            for q_a, q_b in zip(with_docs.question_results, with_base_docs.question_results)
+        )
+
+        lines += [
+            "<details>",
+            f"<summary>📋 {num_changed} question(s) where base docs and PR docs disagree</summary>",
+            "",
+            "| # | Question | Base docs → PR docs |",
+            "|:---|:---|:---:|",
+        ]
+        # Per-question block: questions where base-docs and PR-docs disagree.
+        for i, (base_qa, pr_qa) in enumerate(
+            zip(with_base_docs.question_results, with_docs.question_results)
+        ):
+            if set(pr_qa.runs) != set(base_qa.runs):
+                q_label = question_label(base_qa, i)
+                lines.append(
+                    f"| {i + 1} | {q_label} | {base_qa.correct_count}/{base_qa.total} → {pr_qa.correct_count}/{pr_qa.total} |"
+                )
+        lines += ["", "</details>", ""]
+
+    lines += [
+        "",
+        f"*Model: `{model}` · Questions: `{questions_file}`*",
+    ]
+
+    return "\n".join(lines)
+
+
+def _fmt_score(
     score: float,
     correct: int,
     total: int,
@@ -23,13 +100,16 @@ def fmt_score(
     return s
 
 
-def fmt_delta(current: float, base: float) -> str:
-    delta_pp = round((current - base) * 100)
+def _fmt_delta(current: EvaluationResult, base: EvaluationResult) -> str:
+    delta_pp = round((current.score - base.score) * 100)
+    new_variance = current.score_std**2
+    old_variance = base.score_std**2
+    new_std = math.sqrt(new_variance + old_variance)
     sign = "+" if delta_pp >= 0 else ""
-    return f"{sign}{delta_pp}pp"
+    return f"{sign}{delta_pp}pp (±{new_std:.0%})"
 
 
-def result_icon(a: "dict | bool | None") -> str:
+def _result_icon(a: "dict | bool | None") -> str:
     if isinstance(a, dict):
         if "pass_rate" in a:
             selected = a.get("selected", [])
@@ -48,109 +128,24 @@ def result_icon(a: "dict | bool | None") -> str:
     return "❓"
 
 
-def _answer_score(a: "dict | bool | None") -> "bool | float | None":
-    """Extract a comparable correctness score from an answer entry."""
-    if isinstance(a, dict):
-        if "pass_rate" in a:
-            return a["pass_rate"]
-        return a.get("correct")
-    return a
-
-
-def question_label(questions: list | None, i: int, max_len: int = 80) -> str:
+def question_label(question: QuestionResult, i: int, max_len: int = 80) -> str:
     """Return a display label for question *i* (truncated question text, or Q<n>)."""
-    if not questions or i >= len(questions):
-        return f"Q{i + 1}"
-    text = questions[i].get("question", f"Q{i + 1}")
+    text = question.question.question
     text = " ".join(text.split())
-    if len(text) > max_len:
-        text = text[: max_len - 1] + "…"
+    text = textwrap.shorten(text, width=max_len, placeholder="…")
     return text.replace("|", "\\|")
 
 
-def _score_cell(result: dict) -> str:
-    return fmt_score(
-        result["score"],
-        result["correct_answers"],
-        result["num_questions"],
-        result.get("score_std"),
-        result.get("num_candidates", 1),
-    )
-
-
-def format_comment(
-    without_docs: dict,
-    with_base_docs: dict,
-    with_docs: dict,
-    questions_file: str,
-    model: str,
-) -> str:
-    """Return the full Markdown body for the PR comment."""
-    no_res = without_docs
-    base_res = with_base_docs
-    pr_res = with_docs
-    questions: list | None = with_docs.get("questions") or without_docs.get("questions")
-
-    lines: list[str] = ["<!-- docmetrics -->", "## DocMetrics Report", ""]
-
-    # Summary line: PR docs vs base docs.
-    delta_pp = round((pr_res["score"] - base_res["score"]) * 100)
-    delta_str = fmt_delta(pr_res["score"], base_res["score"])
-    if delta_pp > 0:
-        lines.append(
-            f"> Merging this PR will **increase** the with-docs score by `{delta_str}`"
-            f" compared to the base docs :arrow_up:."
-        )
-    elif delta_pp < 0:
-        lines.append(
-            f"> Merging this PR will **decrease** the with-docs score by `{delta_str}`"
-            f" compared to the base docs :arrow_down:."
-        )
-    else:
-        lines.append(
-            "> Merging this PR will **not change** the with-docs score compared to the base docs."
-        )
-    lines.append("")
-
-    # Three-row comparison table.
-    lines += [
-        "| | Score | Δ vs. no docs |",
-        "|:---|:---:|:---:|",
-        f"| **Without docs** | {_score_cell(no_res)} | — |",
-        f"| **With base docs** | {_score_cell(base_res)}"
-        f" | {fmt_delta(base_res['score'], no_res['score'])} |",
-        f"| **With PR docs** | {_score_cell(pr_res)}"
-        f" | {fmt_delta(pr_res['score'], no_res['score'])} |",
-        "",
-    ]
-
-    # Per-question block: questions where base-docs and PR-docs disagree.
-    base_answers: list = base_res.get("answers", [])
-    pr_answers: list = pr_res.get("answers", [])
-    changed = [
-        (i, b, p)
-        for i, (b, p) in enumerate(zip(base_answers, pr_answers))
-        if _answer_score(b) != _answer_score(p)
-    ]
-    if changed:
-        lines += [
-            "<details>",
-            f"<summary>📋 {len(changed)} question(s) where base docs and PR docs disagree</summary>",
-            "",
-            "| # | Question | Base docs → PR docs |",
-            "|:---|:---|:---:|",
-        ]
-        for i, b, p in changed:
-            q_label = question_label(questions, i)
-            lines.append(f"| {i + 1} | {q_label} | {result_icon(b)} → {result_icon(p)} |")
-        lines += ["", "</details>", ""]
-
-    lines += [
-        "",
-        f"*Model: `{model}` · Questions: `{questions_file}`*",
-    ]
-
-    return "\n".join(lines)
+def _score_cell(result: EvaluationResult) -> str:
+    score = result.score
+    correct = result.correct_answers
+    total = result.num_questions
+    num_candidates = result.num_candidates
+    score_std = result.score_std
+    s = f"{score:.0%} ({correct}/{total * num_candidates})"
+    if score_std is not None:
+        s += f" ±{score_std:.0%}"
+    return s
 
 
 def main() -> None:
@@ -165,11 +160,11 @@ def main() -> None:
     args = parser.parse_args()
 
     with open(args.without_docs) as f:
-        without_docs = json.load(f)
+        without_docs = EvaluationResult.model_validate(json.load(f))
     with open(args.with_base_docs) as f:
-        with_base_docs = json.load(f)
+        with_base_docs = EvaluationResult.model_validate(json.load(f))
     with open(args.with_docs) as f:
-        with_docs = json.load(f)
+        with_docs = EvaluationResult.model_validate(json.load(f))
 
     print(
         format_comment(
