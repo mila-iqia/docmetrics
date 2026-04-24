@@ -85,7 +85,7 @@ runs:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
         python -m docmetrics \
-          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
+          "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
           --ollama-url "${{ inputs.ollama-url }}" \
           --num-candidates "${{ inputs.num-candidates }}" \
@@ -100,7 +100,7 @@ runs:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
         python -m docmetrics \
-          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
+          "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
           --ollama-url "${{ inputs.ollama-url }}" \
           --num-candidates "${{ inputs.num-candidates }}" \
@@ -116,7 +116,7 @@ runs:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
       run: |
         python -m docmetrics \
-          --questions "${{ github.workspace }}/${{ inputs.questions-file }}" \
+          "${{ github.workspace }}/${{ inputs.questions-file }}" \
           --model "${{ inputs.model }}" \
           --ollama-url "${{ inputs.ollama-url }}" \
           --num-candidates "${{ inputs.num-candidates }}" \
