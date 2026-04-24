@@ -7,6 +7,7 @@ import math
 import os
 import random
 import re
+import shlex
 import sys
 import warnings
 from pathlib import Path
@@ -212,6 +213,7 @@ def _get_agent_answer_claude_cli(
     docs_urls: list[str] | None = None,
     expected_skills: set[str] | None = None,
     skills_dir: Path | None = None,
+    ollama_url: str = OLLAMA_DEFAULT_URL,
 ) -> "tuple[Response | None, bool]":
     """Runs Claude CLI with stream-json output and parses the response.
 
@@ -225,11 +227,19 @@ def _get_agent_answer_claude_cli(
 
     if _is_ollama_model(model):
         ollama_model = _ollama_model_name(model)
-        cmd_prefix = ["ollama", "launch", "claude", "--model", ollama_model, "--"]
+        cmd_prefix = [
+            "ollama",
+            "launch",
+            "claude",
+            "--model",
+            ollama_model,
+            "--",
+        ]
+        env = os.environ.copy() | {"OLLAMA_HOST": ollama_url}
     else:
         claude_model = _claude_cli_model_name(model)
         cmd_prefix = ["claude", "--model", claude_model]
-
+        env = None
     cmd = cmd_prefix + [
         "--output-format",
         "stream-json",
@@ -274,8 +284,8 @@ def _get_agent_answer_claude_cli(
             # cmd.extend(["--add-dir", tmpdir])
             cwd = tmpdir
         cmd.append(prompt)
-
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        logger.debug(f"Running Claude CLI with command: {shlex.join(cmd)}")
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, env=env, text=True)
         if proc.returncode != 0:
             logger.error(f"Claude CLI exited with code {proc.returncode}: {proc.stderr}")
             return None, False
@@ -487,6 +497,7 @@ def ask_question(
             docs_urls=docs_urls,
             expected_skills=question.skills,
             skills_dir=question.skills_dir,
+            ollama_url=ollama_url,
         )
         if not agent_answer:
             logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
