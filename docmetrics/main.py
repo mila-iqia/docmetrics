@@ -414,7 +414,7 @@ def make_prompt(
 ) -> str:
     preamble = ""
     if docs_content:
-        preamble = f"Based on the following documentation:\n\n{docs_content}\n\n"
+        preamble = f"Based on the following documentation:\n\n{docs_content}\n\n (and any of the pages linked above),"
     elif docs_urls:
         preamble = (
             "Based on this documentation: "
