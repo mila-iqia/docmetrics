@@ -139,7 +139,7 @@ runs:
             with open(path) as f:
                 data = json.load(f)
             with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-                out.write(f"{name}={data['result']['score']}\n")
+                out.write(f"{name}={data['score']}\n")
         EOF
 
     - name: Write PR comment artifacts
