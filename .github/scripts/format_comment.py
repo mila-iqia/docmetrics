@@ -86,9 +86,9 @@ def format_comment(
     model: str,
 ) -> str:
     """Return the full Markdown body for the PR comment."""
-    no_res = without_docs["result"]
-    base_res = with_base_docs["result"]
-    pr_res = with_docs["result"]
+    no_res = without_docs
+    base_res = with_base_docs
+    pr_res = with_docs
     questions: list | None = with_docs.get("questions") or without_docs.get("questions")
 
     lines: list[str] = ["<!-- docmetrics -->", "## DocMetrics Report", ""]
