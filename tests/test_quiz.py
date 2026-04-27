@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-
-from docmetrics.main import Question
+from docmetrics.objects import Question
 from docmetrics.quiz import run_quiz
 
 QUESTIONS = [

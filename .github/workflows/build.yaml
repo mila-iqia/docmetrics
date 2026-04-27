@@ -94,7 +94,8 @@ jobs:
         uses: ./
         with:
           questions-file: sample_questions.yaml
-          docs-url: https://mila-iqia.github.io/docmetrics # not used
+          docs-url: https://mila-iqia.github.io/docmetrics
+          base-docs-url: https://mila-iqia.github.io/docmetrics
           model: test:dummy
 
   test-docmetrics-docs:

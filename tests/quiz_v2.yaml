@@ -1,0 +1,656 @@
+- question: "Which students have access to the Mila cluster?"
+  options:
+    A: "Interns and visiting researchers hosted on-site by a Mila core lab"
+    B: "Students admitted to Mila's graduate research training program cohort"
+    C: "Students affiliated with any PAICE-partner university in the province"
+    D: "Students supervised by affiliated or non-core Mila faculty members"
+    E: "Students whose supervisor is a Mila core professor or core faculty member"
+  answer: E
+
+- question: "How do I get access to the Mila cluster?"
+  options:
+    A: "By requesting an account through your supervisor, who submits the request via the IT portal"
+    B: "By running `mila register` from a locally installed `milatools` build and confirming via email"
+    C: "By completing the onboarding training quiz, setting up MFA, and waiting for IT to provision access"
+    D: "By being added to your PI's DRAC allocation, which automatically provisions a Mila account"
+    E: "By requesting a temporary account from IDT during onboarding, which is later migrated"
+  answer: C
+
+- question: "What compute resources are available for Mila students?"
+  options:
+    A: "A Slurm cluster of CPU nodes plus a smaller GPU partition reserved per research lab"
+    B: "A Slurm cluster of lab-managed nodes with attached accelerators, shared via reservation"
+    C: "A Slurm cluster federated with DRAC for overflow during peak demand periods"
+    D: "A Slurm cluster standardized on A100s in two memory tiers, with a CPU partition"
+    E: "A Slurm cluster with several GPU generations including H100, L40S, A100, and RTX8000"
+  answer: E
+
+- question: "How many GPUs am I allowed to use at any given time for interactive development?"
+  options:
+    A: "At least one, as Mila aims to give each student one interactive GPU at any time"
+    B: "Up to 4, with additional GPUs requiring a batch allocation on `short-unkillable`"
+    C: "Zero, since interactive sessions are CPU-only and GPUs require batch submissions"
+    D: "Exactly as many as your lab's fair-share quota permits, with no per-user minimum"
+    E: "No fixed limit, subject to overall cluster availability and partition restrictions"
+  answer: A
+
+- question: "How do I connect to the cluster?"
+  options:
+    A: "Through a browser-based JupyterHub terminal hosted at `terminal.server.mila.quebec`"
+    B: "Via SSH from a local terminal, or using the `milatools` package (e.g. `mila init`, `mila-cpu`, `mila code`)"
+    C: "By configuring the Mila VPN client locally, then connecting via `ssh mila-vpn` or remote desktop"
+    D: "Through `ssh mila-gateway`, using a key provisioned by IT via the `mila enroll` flow"
+    E: "Through the `dashboard.server.mila.quebec` browser SSH terminal after MFA login"
+  answer: B
+
+- question: "How do I transfer files between my laptop and the cluster?"
+  options:
+    A: "By attaching files to an IT support ticket and having them staged into your `$HOME`"
+    B: "Via SCP, SFTP, VSCode's remote file browser, or Globus Connect Personal"
+    C: "Through a dedicated file-transfer portal hosted at `files.server.mila.quebec`"
+    D: "Via an `sftp` endpoint on the login node that mounts your `$HOME` over WebDAV"
+    E: "Via `rsync` through the jump host, configured during `mila init` for both directions"
+  answer: B
+
+- question: "Where should I store datasets on the Mila cluster to ensure maximum I/O performance during a training job?"
+  options:
+    A: "$HOME"
+    B: "$SCRATCH"
+    C: "/network/projects"
+    D: "$ARCHIVE"
+    E: "$SLURM_TMPDIR"
+  answer: E
+
+- question: "Where should I setup my code repositories on the Mila cluster?"
+  options:
+    A: "$HOME"
+    B: "$SLURM_TMPDIR"
+    C: "/network/datasets"
+    D: "$SCRATCH"
+    E: "B and D"
+  answer: A
+
+- question: "How do I share files with other people on the Mila cluster?"
+  options:
+    A: "By staging them in a jointly-allocated `$SLURM_TMPDIR` session on a shared compute node"
+    B: "By copying them to a collaborator's `$HOME` via `scp` after they grant write permission"
+    C: "By generating a shared deploy SSH key and distributing it to each collaborator's account"
+    D: "By writing them to `/network/datasets` so they're readable by your lab's group"
+    E: "By placing them in `/network/projects` and configuring ACLs with `setfacl -m`"
+  answer: E
+
+- question: "How do I setup my environment on the cluster to get started with Python code?"
+  options:
+    A: "Install packages system-wide on the login node using `pip install --user` for each project"
+    B: "Use the pre-provisioned per-user Python environment under `$HOME/.local/mila/python`"
+    C: "Build Python from source for each project to pin the interpreter and toolchain version"
+    D: "Use software modules (`module load`), virtual environments (`uv`, `conda`), or containers"
+    E: "Use the default Python interpreter, which is patched by IT for cluster-aware imports"
+  answer: D
+
+- question: "Should I use Conda, pip/virtualenv, or uv?"
+  options:
+    A: "Conda is recommended because it handles system libraries better than the alternatives"
+    B: "All three work; Mila's docs and minimal examples recommend `uv` for its dependency-resolution speed"
+    C: "Pip + virtualenv is recommended, as it is the most portable across HPC environments"
+    D: "The cluster's loader handles environments automatically, so the choice does not matter"
+    E: "Pip is recommended; `uv` is not validated against module-loaded Python versions"
+  answer: B
+
+- question: "Can I use Claude code on the Mila cluster? If so, how?"
+  options:
+    A: "Yes, on an allocated compute node, following non-malicious usage policies and avoiding autonomous overrides"
+    B: "No, the Anthropic API is not reachable from inside the Mila network, even on login nodes"
+    C: "Yes, on the login node since it is lightweight and avoids using a compute allocation"
+    D: "Yes, via a Mila-provided API proxy; direct connections from compute nodes are blocked"
+    E: "No, interactive shell agents are not currently permitted on Mila-managed nodes"
+  answer: A
+
+- question: "How can I use Visual Studio Code to develop code on the Mila cluster?"
+  options:
+    A: "By using the VSCode browser interface available at `dashboard.server.mila.quebec`"
+    B: "By running the VSCode server on the login node and forwarding its port over SSH"
+    C: "By using a Mila-hosted web build of VSCode at `code.server.mila.quebec` on the intranet"
+    D: "By loading a `vscode` module on a compute node and launching it from the allocation"
+    E: "By installing VSCode locally and using 'Remote-SSH' to connect to `mila-cpu` or environments started by `mila code`"
+  answer: E
+
+- question: "Is there a way to get in-person help with my technical questions at Mila?"
+  options:
+    A: "Not in person — support is handled through tickets and tool-specific Slack channels"
+    B: "Yes, by visiting the IT desk in room A.17 during weekday business hours (10 AM-4 PM)"
+    C: "Yes, by booking a 1:1 with a cluster engineer via the Mila intranet office-hours calendar"
+    D: "Yes, by attending IDT office hours on Tuesdays (3–5 PM) and Wednesdays (2–4 PM) in room A.17"
+    E: "Yes, by attending the weekly 'cluster clinic' held Friday mornings (9-11 AM) in lab A"
+  answer: D
+
+- question: "If I have some SSH issues when connecting to compute nodes, which Slack channel should I ask for help in?"
+  options:
+    A: "#tamia-cluster"
+    B: "#pytorch"
+    C: "#compute-canada"
+    D: "#mila-cluster"
+    E: "#it-help"
+  answer: D
+
+- question: "Is it okay to direct-message an IT or IDT team member on Slack if I have a problem?"
+  options:
+    A: "Yes — direct messages are the preferred channel for quick response from the team"
+    B: "Yes, for PyTorch-specific issues; infrastructure issues should still go through tickets"
+    C: "Yes, but outside business hours so as not to interrupt the team's deep-work blocks"
+    D: "No — post in public channels (e.g. #mila-cluster, #pytorch), attend office hours, or open an IT ticket"
+    E: "Yes, provided you first @-mention them in the relevant public channel"
+  answer: D
+
+- question: "Where/how should I ask for help or report issues?"
+  options:
+    A: "Contact your supervising professor, since direct staff support is limited to infrastructure issues"
+    B: "Post on the Mila operations dashboard, which auto-triages issues to the appropriate cluster team"
+    C: "Email the DRAC helpdesk regardless of which cluster the issue concerns, for unified routing"
+    D: "Open an IT ticket for access issues, post in #mila-cluster/#pytorch for code questions, or visit IDT office hours"
+    E: "Use the internal feedback form on the Mila intranet, which auto-routes to the relevant team"
+  answer: D
+
+- question: "Who should I reach out to if I have trouble connecting to the cluster with SSH?"
+  options:
+    A: "The IT Team, via a support ticket at it-support@mila.quebec or the IT portal"
+    B: "The IDT Team, via #mila-cluster on Slack or during their weekly office hours"
+    C: "DRAC technical support, since SSH routing is federated with the DRAC clusters"
+    D: "Your supervising professor, who forwards the issue to the appropriate cluster team"
+    E: "The Mila reception desk, which opens a dispatch ticket on your behalf"
+  answer: A
+
+- question: "Who should I reach out to if I have trouble connecting to the cluster with `mila code`?"
+  options:
+    A: "The IDT Team, via #mila-cluster on Slack or during their weekly office hours"
+    B: "The IT Team, since it involves SSH tunneling and cluster jump-host configuration"
+    C: "IT first for the SSH layer, with IDT as fallback via Slack if the issue is in milatools"
+    D: "DRAC support, since milatools proxies through DRAC infrastructure in some configurations"
+    E: "Either team, but generally not via direct message — open a ticket or post in a Slack channel"
+  answer: C
+
+- question: "Who should I reach out to if I am having trouble debugging my PyTorch code?"
+  options:
+    A: "The IT Team, via the IT support email or by ticket through the support portal"
+    B: "The IDT Team, e.g. in the #pytorch Slack channel or during their weekly office hours"
+    C: "The DRAC portal administrators, via a help-desk ticket on the CCDB site"
+    D: "Your lab's internal systems administrator, if your lab maintains in-house ML support"
+    E: "A and D"
+  answer: B
+
+- question: "Who should I reach out to if I have a technical problem for example having trouble debugging my code?"
+  options:
+    A: "The IDT team, via Slack or office hours, depending on the issue"
+    B: "The IT team, via the support portal or by IT-support email"
+    C: "Your supervising professor, since they handle technical questions first-line"
+    D: "The Mila operations team, via an internal operations ticket"
+    E: "B and D"
+  answer: A
+
+- question: "Who can help me with my technical questions, for example, to help me optimize my pytorch code?"
+  options:
+    A: "The IT support desk, via email or the IT support portal"
+    B: "None of the above — students are expected to self-serve via Mila docs"
+    C: "The network operations team, via the network-ops Slack channel"
+    D: "The Mila research operations team, via a research-ops ticket"
+    E: "The IDT team, via office hours or tool-specific Slack channels"
+  answer: E
+
+- question: "What is the difference between the IT and IDT teams at Mila?"
+  options:
+    A: "IT manages infrastructure, accounts, VPN, and SSH access; IDT assists with ML workflows, PyTorch, distributed training, and docs"
+    B: "They overlap substantially, and either team can be contacted for most technical issues"
+    C: "IT focuses on ML workflows and PyTorch debugging; IDT handles networking, accounts, and SSH access"
+    D: "IT handles DRAC-side federation and account brokering; IDT handles the Mila cluster"
+    E: "IT handles hardware procurement and lab provisioning; IDT handles software and licensing"
+  answer: A
+
+- question: "How do I contact the IT team?"
+  options:
+    A: "By posting in the #it-help Slack channel, which is monitored by the IT team during business hours"
+    B: "By walking in to the IT desk during office hours, which are held weekdays in room A.17"
+    C: "By emailing it-support@mila.quebec to open a support ticket, monitored during business hours"
+    D: "By running `mila support` from a configured local terminal, which opens a ticket on your behalf"
+    E: "Through the DRAC support portal, which federates tickets to Mila IT for cross-cluster issues"
+  answer: C
+
+- question: "How do I contact the IDT team?"
+  options:
+    A: "By submitting a hardware ticket via the Mila IT portal, which routes to IDT for ML escalation"
+    B: "By posting in tool-specific Slack channels (#mila-cluster, #pytorch, #jax), or visiting their office hours in room A.17"
+    C: "By emailing it-support@mila.quebec — IDT is a subteam of IT for ML support requests"
+    D: "By calling the Mila reception desk, which pages the on-call IDT member during business hours"
+    E: "A and C"
+  answer: B
+
+- question: "What kind of GPUs are available on the Mila cluster?"
+  options:
+    A: "A mix including RTX8000, V100, A100, A6000, L40S, and H100, across several node generations"
+    B: "AMD Instinct and Intel Gaudi accelerators, split across two heterogeneous partitions"
+    C: "Primarily V100s, with a small pool of newer Hopper-generation accelerators"
+    D: "NVIDIA A100s only, with a separate CPU partition for preprocessing and data staging"
+    E: "A mix of data-center and consumer-grade GPUs assigned based on the requested partition"
+  answer: A
+
+- question: "Can I run large multi-GPU jobs on the Mila cluster?"
+  options:
+    A: "No, multi-GPU jobs are capped at 1 GPU per task on the Mila cluster's partitions"
+    B: "No — multi-GPU jobs are routed to DRAC TamIA automatically by the Mila Slurm controller"
+    C: "Yes, but only through a CPU-coordinator pattern that launches one GPU per node via `srun`"
+    D: "Yes — via the `main` partition for long jobs, or `short-unkillable` for 4 GPUs uninterrupted for short windows"
+    E: "Yes, but only via a reservation submitted at least a week in advance to the IDT team"
+  answer: D
+
+- question: "My jobs are taking a long time to start running on the cluster. What can I do?"
+  options:
+    A: "Submit multiple copies of the job so Slurm is more likely to pick one up sooner"
+    B: "Run the job on the login node to bypass the queue if it is short enough to fit"
+    C: "Check your resource requests, avoid `unkillable` overuse, and inspect GPU availability on the Grafana dashboard"
+    D: "Email IT to request a manual queue reorder for time-sensitive research jobs"
+    E: "Resubmit with `--requeue=1` to move up in the queue based on attempt count"
+  answer: C
+
+- question: "How can I check the number of available GPUs on the Mila cluster?"
+  options:
+    A: "By inspecting your queue length with `squeue --me | wc -l` and the partition status"
+    B: "By running `sinfo -N --Format=gres:.20,gresused:.20`, which IT publishes as the supported method"
+    C: "By reading the capacity board on the #mila-cluster channel, which is updated hourly"
+    D: "By viewing the capacity panel on the Mila status page at `status.server.mila.quebec`"
+    E: "By running `savail` on the cluster, which lists available GPUs by type and partition"
+  answer: E
+
+- question: "How many H100s are there on the Mila cluster?"
+  options:
+    A: "0"
+    B: "4"
+    C: "16"
+    D: "168"
+    E: "368"
+  answer: C
+
+- question: "How many A100s are there on the Mila cluster?"
+  options:
+    A: "168"
+    B: "40"
+    C: "16"
+    D: "368"
+    E: "408"
+  answer: A
+
+- question: "How many L40s are there on the Mila cluster?"
+  options:
+    A: "16"
+    B: "40"
+    C: "168"
+    D: "408"
+    E: "368"
+  answer: E
+
+- question: "Which partition should I use if I want do to interactive development on the Mila cluster?"
+  options:
+    A: "`short-unkillable` for fast-response interactive work, especially when a CPU job is sufficient"
+    B: "`long` for extended interactive sessions, since it has the highest priority and longest time limit"
+    C: "`main` for standard GPU access, or `unkillable-cpu` for CPU-only lightweight jobs"
+    D: "`interactive` for interactive jobs, the dedicated Mila partition for short live sessions"
+    E: "Submit without specifying a partition and let Slurm pick the best fit by request size"
+  answer: C
+
+- question: "Which partition should I use if I want to run a multi-GPU job on the Mila cluster?"
+  options:
+    A: "The `long-cpu` partition, which aggregates CPU and GPU nodes for distributed training"
+    B: "The `gpu-batch` partition, used for any job requesting more than one GPU at a time"
+    C: "The `multi-gpu` partition, which is the default for jobs requesting more than 1 GPU"
+    D: "The `unkillable-cpu` partition, which accepts mixed CPU/GPU requests for batch jobs"
+    E: "The `main` partition for multi-GPU batch runs, or `short-unkillable` for 4 GPUs uninterrupted under 3 hours"
+  answer: E
+
+- question: "Why are my jobs being interrupted on the Mila cluster before they have a chance to finish?"
+  options:
+    A: "The `short-unkillable` partition auto-expires jobs at 15 minutes regardless of time-limit"
+    B: "Preemption on preemptible partitions, hitting the requested time limit, or a CUDA OOM"
+    C: "The cluster rolls running jobs off nodes on a rotating maintenance schedule each week"
+    D: "The node was rebooted for a scheduled maintenance window without prior notice"
+    E: "Using `$SLURM_TMPDIR` triggers an automatic cleanup that can terminate the host job"
+  answer: B
+
+- question: "Which cluster should I use first if I need to run large LLM training jobs (multiple H100 GPUS)?"
+  options:
+    A: "The Mila login nodes — they have direct access to the H100 partition for prototyping"
+    B: "A local machine with a single H100 to prototype and dry-run before scaling out"
+    C: "The DRAC TamIA or Rorqual clusters, which have larger H100 capacity than Mila"
+    D: "The Mila `long-cpu` partition, which federates to H100 nodes during off-peak hours"
+    E: "The Mila `unkillable` partition, which prioritizes H100 jobs above other partitions"
+  answer: C
+
+- question: "What is Tamia?"
+  options:
+    A: "A Python virtual-environment manager built specifically for HPC and cluster usage"
+    B: "The Slack channel dedicated to PyTorch performance and optimization help at Mila"
+    C: "The internal name for Mila's building and facilities team, including IT and HR functions"
+    D: "A DRAC/PAICE cluster for AI workloads for Quebec-area research institutes, heavy on H100/H200s"
+    E: "A legacy CPU cluster in the process of being decommissioned in favor of newer hardware"
+  answer: D
+
+- question: "Can I do interactive development on the Tamia cluster?"
+  options:
+    A: "Yes — it is designed for interactive use cases and provides a dedicated `interactive` partition"
+    B: "Yes, but during interactive windows scheduled on weekends and overnight hours only"
+    C: "Not really — use a CPU job with `mila code`, or debug on Mila's `short-unkillable` before submitting batch jobs to Tamia"
+    D: "Yes, through a browser-based IDE hosted on the Tamia login node by DRAC for short sessions"
+    E: "Not currently — Tamia is offline for hardware maintenance until further notice"
+  answer: C
+
+- question: "How can I get access to the Tamia cluster?"
+  options:
+    A: "Through a standard DRAC allocation (`def-yourprof` or `rrg-yourprof-ad`)"
+    B: "Through an AIP allocation (`--account=aip-${PI_NAME}`) managed by your supervising professor"
+    C: "By requesting elevated cluster privileges from the Mila IT team via a help-desk ticket"
+    D: "By installing a dedicated Tamia client on your local machine and registering it via DRAC"
+    E: "A and D"
+  answer: B
+
+- question: "How can I get access to the Rorqual, Fir, and Nibi clusters?"
+  options:
+    A: "Through standard DRAC allocations (e.g. `rrg-bengio-ad` or your supervisor's default)"
+    B: "Through AIP allocations (the same `aip-${PI}` mechanism as Tamia, brokered via PAICE)"
+    C: "Automatically when running `mila code`, which federates the sessions across DRAC clusters"
+    D: "By emailing the IDT team with a project description and proposed allocation size"
+    E: "They are staff-only clusters, accessible only to Mila/DRAC system administrators"
+  answer: A
+
+- question: "Can I run jobs on Vulcan / Killarney / Trillium DRAC clusters?"
+  options:
+    A: "No — these are restricted to the host institution's researchers and approved external collaborators"
+    B: "Only by arranging a formal collaboration with a researcher at the host institution beforehand"
+    C: "Yes, and Mila students have the same priority as host-institution users via the federated DRAC scheduler"
+    D: "Yes — Mila students can submit jobs, though at lower priority (Tier 3), which still runs when the cluster is lightly used"
+    E: "Yes, but only for CPU-based preprocessing and data staging, not for GPU jobs"
+  answer: D
+
+- question: "Which documentation should I take a look at to get started on the Tamia cluster?"
+  options:
+    A: "The Mila `$SCRATCH` documentation, since Tamia uses the same storage layout"
+    B: "The IT onboarding training quiz, which covers Tamia in its second module"
+    C: "The DRAC wiki page for Tamia, or the #tamia-cluster Slack channel"
+    D: "The `nvidia-smi` man pages, which document the H100/H200 features used on Tamia"
+    E: "A and B"
+  answer: C
+
+- question: "Can I use uv on the Tamia cluster?"
+  options:
+    A: "No — `uv` is not compatible with Tamia's Slurm and module configuration"
+    B: "No — Tamia is restricted to Conda environments managed by the DRAC software stack"
+    C: "Yes, and DRAC provides a supported `uv` software module via `module load uv`"
+    D: "Yes, but DRAC does not officially support it; you manage the install yourself"
+    E: "Yes, but from the login node only; compute nodes block its dependency-resolution traffic"
+  answer: D
+
+- question: "Do Compute nodes have access to the internet on the Mila cluster?"
+  options:
+    A: "No — they are air-gapped, similar to DRAC Rorqual compute nodes"
+    B: "Only nodes in the `unkillable` partition have outbound internet access by default"
+    C: "Yes, but only during a scheduled maintenance window for software updates"
+    D: "Yes — compute nodes on Mila have outbound internet access, allowing runtime dependency fetching"
+    E: "No — only login nodes have outbound internet, compute nodes route through the proxy"
+  answer: D
+
+- question: "Can I run claude on the Mila cluster login nodes?"
+  options:
+    A: "Yes — running on the login node avoids consuming a compute allocation for short sessions"
+    B: "Yes, for short single-prompt sessions only, not for long agentic loops or batch workflows"
+    C: "No — heavy or agentic processes are not allowed on shared login nodes due to resource pressure"
+    D: "Yes, with the permission-skip flag so it doesn't block other users on the same login node"
+    E: "A and D"
+  answer: C
+
+- question: "Can I run Visual Studio Code on the Mila cluster login nodes?"
+  options:
+    A: "Yes — its server has a small footprint and is unlikely to affect other users on the login node"
+    B: "Yes, via the DRAC web portal only, which proxies to the Mila login node"
+    C: "Yes, if extensions are disabled to reduce memory use and the workspace is small"
+    D: "No — VSCode is not available on Mila-managed hosts due to license restrictions"
+    E: "No — VSCode server uses too many resources; use `mila code` or `mila-cpu` to run on a compute node"
+  answer: E
+
+- question: "Should I run Mila init every day? Or just once?"
+  options:
+    A: "Every time you open a new local terminal session, to refresh the SSH config"
+    B: "Once — it sets up SSH access on your local machine; there is no need to re-run it regularly"
+    C: "Once per day, before your first cluster login of the day, to refresh the OTP cache"
+    D: "Only when your SSH connection starts failing or the proxy-jump configuration changes"
+    E: "Every time before submitting an `sbatch` job, to refresh the credentials cache locally"
+  answer: B
+
+- question: "Can I sit anywhere in the Mila office?"
+  options:
+    A: "Yes — Mila operates an open floor plan without seat assignments or reservations"
+    B: "Yes, provided you note your seat on the intranet reservation board on arrival"
+    C: "Yes, but in areas designated for your team or research group on each floor"
+    D: "No — students are restricted to study rooms and shared meeting areas during work hours"
+    E: "No — seats must be reserved under Mila's desk reservation and clean-desk policies"
+  answer: E
+
+- question: "How many different SSH keys can I use to connect to the Mila cluster?"
+  options:
+    A: "1"
+    B: "10"
+    C: "5"
+    D: "Unlimited"
+    E: "2"
+  answer: E
+
+- question: "Can I add a new SSH key myself to connect to the Mila cluster?"
+  options:
+    A: "Yes — by editing `~/.ssh/authorized_keys` on the cluster filesystem from a login node"
+    B: "Yes — through a self-service page on the Mila intranet at `keys.server.mila.quebec`"
+    C: "No — you must request it from IT-support via a ticket or by emailing IT directly"
+    D: "Yes — by running `mila init --add-key` locally to push it during the SSH config flow"
+    E: "A and B"
+  answer: C
+
+- question: "What is a Slurm cluster?"
+  options:
+    A: "A system managed by a workload scheduler where users request resources (CPUs, memory, GPUs) before running jobs"
+    B: "A database cluster tuned for ML dataset storage, with SLURM-managed access controls and quotas"
+    C: "A pool of workstations federated by a research consortium, sharing storage and SLURM scheduling logic"
+    D: "An interactive portal for provisioning training jobs, backed by SLURM under the hood for queueing"
+    E: "A category of Python virtual environment with HPC extensions for direct cluster execution"
+  answer: A
+
+- question: "What is a Login node?"
+  options:
+    A: "A node dedicated to long-running training jobs that persist across user sessions"
+    B: "A compute node with 8× H100 GPUs attached, dedicated to interactive prototyping work"
+    C: "The cluster entry point, used for lightweight tasks like navigation, light compilation, and submitting batch jobs"
+    D: "A node disconnected from the internet for security, used as a bastion to compute nodes"
+    E: "A storage-backed node that hosts the `$SCRATCH` partition and serves it via NFS"
+  answer: C
+
+- question: "What is a Compute Node?"
+  options:
+    A: "A node used for handling web traffic and SSH tunneling between login and storage nodes"
+    B: "The node you land on when you run `ssh mila` from a configured local terminal"
+    C: "A dedicated server within the cluster where resources (CPUs, GPUs, RAM) are allocated to your job by Slurm"
+    D: "A node used for long-term archival storage, accessible from the login nodes only"
+    E: "B and D"
+  answer: C
+
+- question: "What is a GPU?"
+  options:
+    A: "General Purpose Utility — a virtualized resource pool managed by Slurm for batch jobs"
+    B: "A network switch connecting login nodes to the shared cluster filesystem at high bandwidth"
+    C: "Gigabyte Processing Unit — a memory-tier abstraction in modern HPC schedulers and runtimes"
+    D: "Graphics Processing Unit: a hardware accelerator used for matrix operations common in AI and HPC workloads"
+    E: "A storage tier faster than `$SLURM_TMPDIR`, used for tensor checkpoints and shared caches"
+  answer: D
+
+- question: "What is the difference between a CPU node and a GPU node?"
+  options:
+    A: "A CPU node has central processors for sequential work; a GPU node adds parallel accelerators (A100, L40S) for AI"
+    B: "CPU nodes run a different OS distribution than GPU nodes for hardware compatibility reasons"
+    C: "CPU nodes have outbound internet access, while GPU nodes are restricted to the intranet"
+    D: "CPU nodes are billed to your lab's allocation; GPU nodes use a separate fair-share quota"
+    E: "They are functionally identical; the distinction is administrative naming for partitions"
+  answer: A
+
+- question: "Why do I need to allocate resources before I can run a job?"
+  options:
+    A: "To record the cost in the per-lab usage report and reconcile against the lab's quota"
+    B: "To meet DRAC compliance requirements that all cluster jobs declare resources in advance"
+    C: "Because the compiler toolchain needs the resource plan to produce optimized binaries"
+    D: "Because Slurm uses the request to prevent over-subscribing the hardware, so you get dedicated access to the requested CPUs and GPUs"
+    E: "It's a legacy convention from older HPC systems that is rarely enforced on Mila today"
+  answer: D
+
+- question: "What is Slurm, and where can I learn more about how it works and how to use it?"
+  options:
+    A: "It's an internal email client for cluster announcements; details are in the onboarding materials"
+    B: "It's the workload manager for the cluster; see the 'Running your code' and 'Advanced SLURM usage' sections of the Mila technical docs"
+    C: "It's a Python package installed via `pip install slurm`; documentation is on the official PyPI site"
+    D: "It's an NVIDIA-managed scheduler bundled with CUDA; documentation is on the NVIDIA developer site"
+    E: "A and D"
+  answer: B
+
+- question: "What is the difference between an interactive and batch job?"
+  options:
+    A: "Batch jobs request GPUs, while interactive jobs are CPU-only by default on Mila"
+    B: "Interactive jobs run on TamIA via `mila code`; batch jobs run on the Mila cluster via `sbatch`"
+    C: "Interactive jobs are protected from preemption; batch jobs can be preempted at any time"
+    D: "Interactive jobs give you a live shell for debugging; batch jobs run in the background via `sbatch` scripts"
+    E: "There is no practical difference between the two — Slurm treats them identically internally"
+  answer: D
+
+- question: "What are the main differences between submitting jobs on the Mila and DRAC clusters?"
+  options:
+    A: "Mila uses Slurm, while DRAC uses a non-Slurm scheduler (PBS-like) for resource management"
+    B: "Mila has larger per-user storage quotas and longer scratch retention than DRAC clusters"
+    C: "Mila compute nodes have outbound internet access for runtime dependency fetching, while most DRAC nodes (e.g. Rorqual) are air-gapped"
+    D: "DRAC provides more generous GPU time than Mila for most users via the `rrg-` allocations"
+    E: "A and B"
+  answer: C
+
+- question: "First Steps: How do I obtain my Mila account?"
+  options:
+    A: "By contacting Mila system administrators and completing the IT onboarding training quiz, if you meet the affiliation requirements"
+    B: "By completing a technical interview with a core professor and an admissions panel at Mila"
+    C: "By paying a monthly subscription fee via the Mila website during account registration and onboarding"
+    D: "By creating an account through GitHub SSO and linking it to your supervising lab via the intranet"
+    E: "Accounts are created automatically for any student at a Canadian university with a verified `.ca` email"
+  answer: A
+
+- question: "First Steps: How do I install wsl?"
+  options:
+    A: "By downloading the WSL binary from the Mila dashboard and copying it via SCP after first login"
+    B: "By running `module load wsl` from the login node, which configures it on your local Windows host"
+    C: "WSL is not needed; you can connect directly from Windows PowerShell using OpenSSH built into Windows 10/11"
+    D: "By submitting an IT ticket to have WSL2 installed remotely on your laptop by the Mila IT team"
+    E: "By running `wsl --install` in an elevated Windows PowerShell, as a prerequisite for local Windows-based development before connecting"
+  answer: E
+
+- question: "First Steps: How do I install uv on my local machine?"
+  options:
+    A: "By following the standard install instructions for your OS, as linked in the 'Get Started' Mila docs"
+    B: "By compiling it from source using a C++ toolchain and the `cargo` Rust build system"
+    C: "You cannot install it locally; it only works on the Slurm-managed cluster login nodes"
+    D: "By asking the IDT team to install it on your machine remotely via a screen-share session"
+    E: "Through the DRAC web portal, which distributes signed `uv` binaries for each platform"
+  answer: A
+
+- question: "First Steps: How do I connect to the cluster?"
+  options:
+    A: "Through a web portal at a Mila-managed IP address, with a browser-based shell session"
+    B: "Via `ssh mila` from your local terminal (if configured) or using `milatools` installed locally"
+    C: "By asking IT to open a remote desktop session to a cluster node from your local browser"
+    D: "By running `sbatch connect.sh` from a preinstalled startup script after onboarding"
+    E: "A and B"
+  answer: B
+
+- question: "First Steps: What is the preferred way to install milatools?"
+  options:
+    A: "By running `pip install -U milatools` in a local terminal with system Python"
+    B: "By running `uv tool install milatools` in a local terminal after installing `uv`"
+    C: "By downloading a prebuilt binary from the Mila releases page on GitHub for your OS"
+    D: "By requesting the binary via an IT ticket, which provisions it on your laptop remotely"
+    E: "Milatools comes preinstalled on cluster login nodes and does not need local installation"
+  answer: B
+
+- question: "First Steps: How do I configure milatools?"
+  options:
+    A: "By manually editing an XML configuration file shipped with the milatools package locally"
+    B: "By running `mila init` locally and following the interactive prompts, which set up SSH configuration and proxy jumps"
+    C: "By editing the Slurm configuration file directly, which milatools reads on each invocation"
+    D: "By setting up an AIP allocation on Tamia first, then running `mila init` against that profile"
+    E: "C and D"
+  answer: B
+
+- question: "First Steps: How do I install uv on the cluster?"
+  options:
+    A: "By opening an IT ticket to have it installed globally for all cluster users"
+    B: "By running the curl install command from the uv docs on a login node"
+    C: "It is already installed globally on all login and compute nodes by default"
+    D: "By running `module load uv` on the login node, which adds it to your PATH"
+    E: "`uv` is not permitted on the cluster — Mila uses pip+virtualenv exclusively"
+  answer: B
+
+- question: "First Steps: How do I execute my first job on the cluster?"
+  options:
+    A: "By running the Python script directly on the login node once it is short enough to fit"
+    B: "By reading the 'Run Your First Job' example, preparing a `job.sh` with resource requests, and running `sbatch`"
+    C: "By launching the job from the Grafana dashboard's job-submission panel during business hours"
+    D: "By describing the job to the IDT team and letting them submit it on your behalf via Slack"
+    E: "By running `srun` without specifying any resources, which Slurm picks based on user defaults"
+  answer: B
+
+- question: "First Steps: How do I train my first model on the cluster?"
+  options:
+    A: "By running the training code on your laptop against cluster data over a Mila VPN tunnel"
+    B: "By asking Claude Code to run it on your behalf on a compute node via `mila code` and `sbatch`"
+    C: "By copying weights to `$HOME` and executing the training on the login node interactively"
+    D: "By using the Tamia cluster interactively via `mila code` after requesting an allocation"
+    E: "By following the 'Train Your First Model' guide — allocating a GPU, staging CIFAR-10 into `$SLURM_TMPDIR`, and launching a batch job"
+  answer: E
+
+- question: "VSCode: What are some suggested extensions for SLURM?"
+  options:
+    A: "The 'Slurm Supercomputer' plugin from the VSCode marketplace, which adds syntax highlighting and submission"
+    B: "No Slurm-specific extension is required; use 'Remote-SSH' to connect to `mila-cpu` or `mila code`, plus the Python extension"
+    C: "The 'Jupyter Hub Slurm Connector' extension, which integrates JupyterHub session management with VSCode"
+    D: "The 'DRAC Integration Framework' extension, which adds DRAC and Mila partition awareness to VSCode"
+    E: "A and C"
+  answer: B
+
+- question: "Which of the following is NOT a good practice for development workflow on the Mila cluster?"
+  options:
+    A: "Running a 12-hour distributed PyTorch training loop on the login node to skip the Slurm queue"
+    B: "Staging large datasets into `$SLURM_TMPDIR` before a heavy training run for max I/O speed"
+    C: "Using `uv` to install and resolve Python dependencies for a project's reproducibility"
+    D: "Using `mila code` to attach a VSCode instance to a GPU compute node for interactive prototyping"
+    E: "Checkpointing model state to `$SCRATCH` periodically to recover from preemption events"
+  answer: A
+
+- question: "Am I allowed to use Claude code with `--dangerously-skip-permissions` on the cluster?"
+  options:
+    A: "No — it lets autonomous processes run unbounded commands, against Anthropic's agentic policies and cluster rules"
+    B: "Yes — it is the standard way to bypass Slurm queue constraints on shared partitions"
+    C: "Yes — Anthropic recommends it for supercomputer environments to avoid permission prompts"
+    D: "Yes, but only on the DRAC Rorqual cluster, where compute nodes are air-gapped from the internet"
+    E: "Yes, but only on the login node, where it does not consume a compute allocation"
+  answer: A
+
+- question: "What kind of technical expertise do the members of IDT have? What kind of questions can they help answer?"
+  options:
+    A: "Resetting passwords, managing building access cards, and onboarding new students into Mila"
+    B: "Infrastructure operations, VPN routing, MFA enrollment, and physical server racking on the cluster"
+    C: "Applied ML workflows, distributed training, PyTorch/Jax debugging, and optimizing jobs across the cluster"
+    D: "Python syntax questions for entry-level students and onboarding training-quiz guidance for new accounts"
+    E: "A and B"
+  answer: C
+
+- question: "What is a 'CUDA OOM' error? What causes those?"
+  options:
+    A: "The login node ran out of memory under collective user load, killing background processes"
+    B: "A signal that your `$HOME` quota is exhausted and CUDA can no longer write checkpoints"
+    C: "A network error indicating your SSH key has expired mid-job and CUDA can no longer authenticate"
+    D: "CUDA Out of Memory — the combination of tensors, weights, gradients, and optimizer state exceeds the GPU's VRAM"
+    E: "An indication that Slurm preempted your job due to unrelated system load on the cluster"
+  answer: D
