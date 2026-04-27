@@ -88,6 +88,7 @@ jobs:
     name: Test the DocMetrics action
     needs: [unit_tests]
     runs-on: ubuntu-latest
+    continue-on-error: true  # PRs from forks will not be able to post the comment.
     steps:
       - uses: actions/checkout@v6
       - name: Run DocMetrics action
