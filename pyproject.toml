@@ -21,7 +21,6 @@ dependencies = [
 [project.scripts]
 docmetrics = "docmetrics.main:main"
 
-
 [dependency-groups]
 dev = [
     "pytest>=8.3.3",
@@ -46,7 +45,6 @@ filterwarnings = [
 [tool.uv]
 managed = true
 
-
 [tool.uv-dynamic-versioning]
 vcs = "git"
 style = "semver"
@@ -68,3 +66,62 @@ packages = ["docmetrics"]
 
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
+
+[tool.hatch.envs.default]
+installer = "uv"
+dependency-groups = ["dev"]
+
+[tool.hatch.envs.default.scripts]
+uv = 'UV_PROJECT_ENVIRONMENT="{env:VIRTUAL_ENV}" "$(which uv)" {args}'
+
+[tool.hatch.envs.claude]
+detached = true
+installer = "uv"
+
+[tool.hatch.envs.claude.scripts]
+install-linux = [
+    """which claude && exit 0 \
+        || curl -fsSL https://claude.ai/install.sh | bash"""
+]
+install-macos = [
+   "install-linux"
+]
+
+[tool.hatch.envs.claude.overrides]
+platform.linux.scripts = [
+  "install=install-linux",
+]
+platform.macos.scripts = [
+  "install=install-macos",
+]
+
+[tool.hatch.envs.ollama]
+detached = true
+installer = "uv"
+
+[tool.hatch.envs.ollama.env-vars]
+OLLAMA_MODEL = "{env:OLLAMA_MODEL:qwen3.5:35b}"
+
+[tool.hatch.envs.ollama.scripts]
+install-linux = [
+    """which ollama && exit 0 \
+        || curl -fsSL https://ollama.com/install.sh | sh"""
+]
+install-macos = [
+   "install-linux"
+]
+claude = [
+    "hatch run claude:install",
+    "ollama launch claude --model {env:OLLAMA_MODEL} -- {args}"
+]
+claude-stream = [
+    "claude --output-format stream-json --print --verbose"
+]
+
+[tool.hatch.envs.ollama.overrides]
+platform.linux.scripts = [
+  "install=install-linux",
+]
+platform.macos.scripts = [
+  "install=install-macos",
+]

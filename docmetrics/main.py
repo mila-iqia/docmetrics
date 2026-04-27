@@ -7,6 +7,7 @@ import math
 import os
 import random
 import re
+import shlex
 import sys
 import warnings
 from pathlib import Path
@@ -29,6 +30,8 @@ Letter = Literal["A", "B", "C", "D", "E"]
 
 DUMMY_MODEL = "test:dummy"
 """A model name that returns a random answer without calling any external API."""
+CLAUDE_CLI_PREFIX = "claude:"
+"""Prefix for Claude CLI model names, e.g. 'claude:claude-opus-4-6'."""
 OLLAMA_PREFIX = "ollama:"
 """Prefix for Ollama model names, e.g. 'ollama:qwen3-coder-next:latest'."""
 MAX_TOOL_CALLS = 5
@@ -46,7 +49,7 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True)
+@dataclass
 class Question:
     question: str
     """The question to ask the LLM."""
@@ -56,6 +59,11 @@ class Question:
 
     answer: Letter
     """The correct answer to the question (must be one of the letters in `options`)."""
+
+    skills: set[str] = dataclasses.field(default_factory=set)
+    """Tool/skill name that should be invoked when answering (e.g. 'Bash', 'Read')."""
+
+    skills_dir: Path | None = None
 
     def __postinit__(self):
         assert self.answer in self.options, "correct answer isn't in the options!"
@@ -137,6 +145,19 @@ def _is_ollama_model(model: str) -> bool:
     return model.startswith(OLLAMA_PREFIX)
 
 
+def _is_claude_cli_model(model: str) -> bool:
+    return model.startswith(CLAUDE_CLI_PREFIX)
+
+
+def _claude_cli_model_name(model: str) -> str:
+    """Strips the 'claude:' prefix to get the bare model name.
+
+    >>> _claude_cli_model_name("claude:claude-opus-4-6")
+    'claude-opus-4-6'
+    """
+    return model.removeprefix(CLAUDE_CLI_PREFIX)
+
+
 def _ollama_model_name(model: str) -> str:
     """Strips the 'ollama:' prefix to get the bare model name.
 
@@ -146,32 +167,10 @@ def _ollama_model_name(model: str) -> str:
     return model.removeprefix(OLLAMA_PREFIX)
 
 
-@functools.cache
-def _get_ollama_client(base_url: str = OLLAMA_DEFAULT_URL):
-    load_dotenv()  # read the OLLAMA_API_KEY from the .env file if present.
-    import ollama
-
-    return ollama.Client(
-        host=base_url,
-        headers={"Authorization": "Bearer " + OLLAMA_API_KEY}
-        if (OLLAMA_API_KEY := os.environ.get("OLLAMA_API_KEY"))
-        else None,
-    )
-
-
 def _is_local_url(url: str) -> bool:
     from urllib.parse import urlparse
 
     return urlparse(url).hostname in ("localhost", "127.0.0.1", "::1")
-
-
-def _is_allowed_docs_url(url: str, docs_urls: list[str]) -> bool:
-    """Returns True if `url` is under at least one of the given docs base URLs."""
-    for base in docs_urls:
-        base = base.rstrip("/")
-        if url == base or url.startswith(base + "/"):
-            return True
-    return False
 
 
 def _fetch_url(url: str) -> str:
@@ -205,110 +204,139 @@ def _fetch_url(url: str) -> str:
     return "\n".join(ex._parts)
 
 
-def _get_agent_answer_ollama(
+def _get_agent_answer_claude_cli(
     model: str,
+    system_prompt: str,
     prompt: str,
-    ollama_url: str = OLLAMA_DEFAULT_URL,
+    with_docs: bool,
     use_web_fetch: bool = False,
     docs_urls: list[str] | None = None,
-) -> "Response | None":
-    client = _get_ollama_client(ollama_url)
-    ollama_model = _ollama_model_name(model)
-    schema = Response.model_json_schema()
-    full_prompt = (
-        prompt
-        + f"\nRespond with a JSON object matching this schema: {json.dumps(schema)}\n"
-        + 'Example: {"answer": "A", "justification": "Because..."}'
-    )
+    expected_skills: set[str] | None = None,
+    skills_dir: Path | None = None,
+    ollama_url: str = OLLAMA_DEFAULT_URL,
+) -> "tuple[Response | None, bool]":
+    """Runs Claude CLI with stream-json output and parses the response.
 
-    messages: list = [{"role": "user", "content": full_prompt}]
-    tools = [client.web_fetch] if use_web_fetch else None
+    Returns (response, skill_invoked) where skill_invoked is True if the
+    expected_skill tool name appeared in a tool_use event."""
+    import contextlib
+    import subprocess
+    import tempfile
 
-    import ollama as _ollama
+    expected_skills = expected_skills or set()
 
-    tool_call_count = 0
-    while True:
+    if _is_ollama_model(model):
+        ollama_model = _ollama_model_name(model)
+        cmd_prefix = [
+            "ollama",
+            "launch",
+            "claude",
+            "--model",
+            ollama_model,
+            "--",
+        ]
+        env = os.environ.copy() | {"OLLAMA_HOST": ollama_url}
+    else:
+        claude_model = _claude_cli_model_name(model)
+        cmd_prefix = ["claude", "--model", claude_model]
+        env = None
+    cmd = cmd_prefix + [
+        "--output-format",
+        "stream-json",
+        "--print",
+        "--verbose",
+        "--allowedTools",  # https://code.claude.com/docs/en/tools-reference
+        " ".join(
+            [
+                "Glob",
+                "Grep",
+                "Monitor",
+                "Read",
+                "Skill",
+                "ToolSearch",
+                *(  # https://code.claude.com/docs/en/settings#permission-rule-syntax
+                    [f"WebFetch(domain:{d})" for d in docs_urls]
+                    if use_web_fetch and docs_urls
+                    else (["WebFetch"] if use_web_fetch else [])
+                ),
+                "WebSearch",
+            ]
+        ),
+        "--permission-mode",
+        "dontAsk",  # https://code.claude.com/docs/en/agent-sdk/permissions#available-modes
+        "--system-prompt",
+        system_prompt,
+        "--json-schema",
+        json.dumps(Response.model_json_schema()),
+    ]
+
+    ctx = tempfile.TemporaryDirectory() if with_docs and skills_dir else contextlib.nullcontext()
+    with ctx as tmpdir:
+        cwd = None
+        # There seams to be no other wait than to have .claude/skills in the CWD
+        # for claude to find the required skills
+        if skills_dir and tmpdir:
+            claude_dir = Path(tmpdir) / ".claude"
+            claude_dir.mkdir()
+            skills_dir.copy(claude_dir / "skills")
+            # --add-dir seams to make claude code hang
+            # cmd.extend(["--add-dir", str(skills_dir)])
+            # cmd.extend(["--add-dir", tmpdir])
+            cwd = tmpdir
+        cmd.append(prompt)
+        logger.debug(f"Running Claude CLI with command: {shlex.join(cmd)}")
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, env=env, text=True)
+        if proc.returncode != 0:
+            logger.error(f"Claude CLI exited with code {proc.returncode}: {proc.stderr}")
+            return None, False
+
+    skills_invoked = set()
+    final_text: str | None = None
+
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
         try:
-            response = client.chat(
-                model=ollama_model,
-                messages=messages,
-                tools=tools,
-                format="json" if not tools else None,
-            )
-        except _ollama.ResponseError as e:
-            logger.warning(f"Ollama returned an error (invalid tool call?): {e}")
-            return None
-        messages.append(response.message)
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
 
-        if not response.message.tool_calls:
-            content = response.message.content
-            if not content:
-                return None
-            try:
-                return Response.model_validate_json(content)
-            except pydantic.ValidationError:
-                return parse_response_fallback(content)
-
-        tool_call_count += len(response.message.tool_calls)
-        if tool_call_count > MAX_TOOL_CALLS:
-            logger.warning(
-                f"Exceeded maximum tool calls ({MAX_TOOL_CALLS}), asking for a final answer."
-            )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "You have reached the maximum number of tool calls. "
-                        "Based on the information gathered so far, please provide your final answer now. "
-                        f"Respond with a JSON object matching this schema: {json.dumps(schema)}\n"
-                        'Example: {"answer": "A", "justification": "Because..."}'
-                    ),
-                }
-            )
-            try:
-                final_response = client.chat(
-                    model=ollama_model,
-                    messages=messages,
-                    format="json",
-                )
-            except _ollama.ResponseError as e:
-                logger.warning(f"Ollama returned an error on final answer request: {e}")
-                return None
-            content = final_response.message.content
-            if not content:
-                return None
-            try:
-                return Response.model_validate_json(content)
-            except pydantic.ValidationError:
-                return parse_response_fallback(content)
-
-        for tool_call in response.message.tool_calls:
-            if tool_call.function.name == "web_fetch":
-                url = tool_call.function.arguments.get("url", "")
-                if docs_urls and not _is_allowed_docs_url(url, docs_urls):
-                    logger.warning(f"LLM requested disallowed URL (blocked): {url}")
-                    content = (
-                        f"Access denied: {url!r} is not under the allowed documentation URLs."
+        if event.get("type") == "assistant":
+            content = event.get("message", {}).get("content", [])
+            for block in content:
+                if block.get("type") == "tool_use":
+                    tool_name = block.get("name", "")
+                    skill_name = (
+                        block.get("input", {}).get("skill")
+                        if tool_name.lower() == "skill"
+                        else None
                     )
-                else:
-                    logger.info(f"LLM fetching documentation URL: {url}")
-                    use_ollama_fetch = bool(
-                        os.environ.get("OLLAMA_API_KEY")
-                    ) and not _is_local_url(url)
-                    try:
-                        if use_ollama_fetch:
-                            content = str(client.web_fetch(**tool_call.function.arguments))
-                        else:
-                            content = _fetch_url(url)
-                    except Exception as e:
-                        logger.warning(f"web_fetch failed for {url}: {e}")
-                        content = f"Error fetching URL: {e}"
-            else:
-                logger.warning(f"LLM requested unknown tool: {tool_call.function.name}")
-                content = f"Tool {tool_call.function.name} not found"
-            messages.append(
-                {"role": "tool", "content": content, "tool_name": tool_call.function.name}
-            )
+                    logger.info(f"Claude CLI invoked tool: {tool_name}:{skill_name}")
+                    skills_invoked.add(skill_name or tool_name)
+                elif block.get("type") == "text":
+                    final_text = block.get("text", "")
+        elif event.get("type") == "result":
+            result_text = event.get("structured_output", event.get("result", ""))
+            if result_text:
+                final_text = result_text
+
+    check_skills = False
+
+    if with_docs:
+        check_skills = not (expected_skills - skills_invoked)
+    else:
+        check_skills = not (expected_skills & skills_invoked)
+
+    if not final_text:
+        return None, check_skills
+
+    for validate in [Response.model_validate, Response.model_validate_json]:
+        try:
+            return validate(final_text), check_skills
+        except pydantic.ValidationError:
+            pass
+    return parse_response_fallback(final_text), check_skills
 
 
 def evaluate_llm(
@@ -341,7 +369,11 @@ def evaluate_llm(
     Notes
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
-    client = None if model == DUMMY_MODEL or _is_ollama_model(model) else get_google_genai_client()
+    client = (
+        None
+        if model == DUMMY_MODEL or _is_ollama_model(model) or _is_claude_cli_model(model)
+        else get_google_genai_client()
+    )
     num_questions = len(questions)
 
     docs_content: str | None = None
@@ -384,11 +416,16 @@ def evaluate_llm(
                 docs_urls=docs_urls,
                 docs_content=docs_content,
                 ollama_url=ollama_url,
-                # Adding this gives the LLM the ability to consult URLs given in the prompt.
-                # Not needed (or wanted) when docs are already inlined or for Ollama models.
+                # Adding this gives the LLM the ability to consult URLs given in
+                # the prompt.
+                # Not needed (or wanted) when docs are already inlined or for
+                # Ollama/Claude CLI models.
                 tools=(
                     [types.Tool(url_context=types.UrlContext())]
-                    if with_docs and docs_content is None and not _is_ollama_model(model)
+                    if with_docs
+                    and docs_content is None
+                    and not _is_ollama_model(model)
+                    and not _is_claude_cli_model(model)
                     else None
                 ),
             )
@@ -405,7 +442,15 @@ def evaluate_llm(
 
 
 def load_questions(questions_path: Path) -> list[Question]:
-    return [Question(**q) for q in yaml.safe_load(questions_path.read_text())]
+    questions = []
+
+    for q in yaml.safe_load(questions_path.read_text()):
+        q = Question(**q)
+        if q.skills:
+            q.skills_dir = questions_path.parent.parent
+        questions.append(q)
+
+    return questions
 
 
 def ask_question(
@@ -436,21 +481,32 @@ def ask_question(
         logger.info(f"{q_prefix}Correct answer: {question.answer}, dummy answer: {dummy_answer}")
         return dummy_answer
 
-    if _is_ollama_model(model):
-        prompt = make_prompt(
+    if _is_ollama_model(model) or _is_claude_cli_model(model):
+        system_prompt, prompt = make_prompt(
             question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
         )
-        logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
+        logger.debug(f"{q_prefix}Prompt sent to LLM: [magenta]{prompt}")
         # Use web_fetch tool when docs are given as URLs (not already inlined via --docs-file).
         use_web_fetch = with_docs and bool(docs_urls) and docs_content is None
-        agent_answer = _get_agent_answer_ollama(
-            model, prompt, ollama_url, use_web_fetch=use_web_fetch, docs_urls=docs_urls
+        agent_answer, skill_invoked = _get_agent_answer_claude_cli(
+            model,
+            system_prompt,
+            prompt,
+            with_docs=with_docs,
+            use_web_fetch=use_web_fetch,
+            docs_urls=docs_urls,
+            expected_skills=question.skills,
+            skills_dir=question.skills_dir,
+            ollama_url=ollama_url,
         )
         if not agent_answer:
             logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
             return None
+        if question.skills and with_docs and not skill_invoked:
+            logger.warning(f"{q_prefix}Expected skill '{question.skills}' was NOT invoked!")
         logger.info(
             f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}"
+            + (f", skill '{question.skills}' invoked: {skill_invoked}" if question.skills else "")
         )
         if agent_answer.justification:
             logger.debug(f"{q_prefix}LLM's justification: {agent_answer.justification}")
@@ -463,7 +519,7 @@ def ask_question(
     # there.
 
     assert client is not None
-    prompt = make_prompt(
+    _, prompt = make_prompt(
         question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
     )
     logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
@@ -576,7 +632,7 @@ def make_prompt(
     with_docs: bool,
     docs_urls: list[str] | None = None,
     docs_content: str | None = None,
-) -> str:
+) -> tuple[str, str]:
     if with_docs and docs_content:
         preamble = f"Based on the following documentation:\n\n{docs_content}\n\n"
     elif with_docs and docs_urls:
@@ -584,11 +640,12 @@ def make_prompt(
     else:
         preamble = ""
     return (
-        preamble
-        + "Select the correct answer to the following question:\n"
-        + f"{question.question}\n"
-        + "\n".join(f"- {letter}: {answer}" for letter, answer in question.options.items())
-        + "\n"
+        preamble + "Select the correct answer's letter to the question asked",
+        (
+            f"{question.question}\n"
+            + "\n".join(f"- {letter}: {answer}" for letter, answer in question.options.items())
+            + "\n"
+        ),
     )
 
 
@@ -631,7 +688,7 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         "--model",
         type=str,
         default="gemini-2.5-flash",
-        help='LLM model to use (e.g. "gemini-2.5-flash", "ollama:qwen3-coder-next:latest"). Use "test:dummy" for random answers without any API calls.',
+        help='LLM model to use (e.g. "gemini-2.5-flash", "ollama:gemma4:31b", "claude:claude-sonnet-4-6"). Use "test:dummy" for random answers without any API calls.',
     )
     p.add_argument(
         "--docs-url",
@@ -667,7 +724,7 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
     )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="count")
     # Evaluate args on the top-level parser so `docmetrics` (no subcommand) works.
@@ -689,7 +746,7 @@ def main():
     quiz_parser.add_argument("-v", "--verbose", action="count")
     quiz_parser.add_argument("--questions", type=Path, required=True)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     verbose: int = args.verbose or 0
 
     logging.basicConfig(
@@ -720,6 +777,8 @@ def main():
     docs_files: list[Path] | None = args.docs_file if args.docs_file else None
     ollama_url: str = args.ollama_url
     num_candidates: int = args.num_candidates
+    if ollama_url:
+        os.environ["OLLAMA_HOST"] = ollama_url
     if docs_urls and docs_files:
         parser.error("--docs-url and --docs-file are mutually exclusive.")
 
