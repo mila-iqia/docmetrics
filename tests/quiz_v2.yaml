@@ -1,0 +1,251 @@
+- question: "When using Visual Studio Code to develop on the Mila cluster, which method is explicitly prohibited due to overloading shared resources?"
+  options:
+    A: "Running 'mila code dir --alloc' from your local terminal"
+    B: "Connecting via plain VSCode Remote-SSH directly to login.server.mila.quebec"
+    C: "Using 'mila code' with the '--cpus-per-task' flag"
+    D: "Connecting to the 'mila-cpu' host set up by 'mila init'"
+    E: "Enabling 'remote.SSH.showLoginTerminal' to handle OTP prompts"
+  answer: B
+
+- question: "If you need to run large LLM training jobs requiring H100 GPUs on the Mila cluster, which SLURM partition must you submit your job to?"
+  options:
+    A: "long"
+    B: "unkillable"
+    C: "main"
+    D: "short-unkillable"
+    E: "dgx-hopper"
+  answer: D
+
+- question: "Which container runtime is preferred and supported for running custom images within SLURM jobs on the Mila cluster?"
+  options:
+    A: "Docker"
+    B: "Singularity"
+    C: "Podman"
+    D: "Kubernetes"
+    E: "Apptainer"
+  answer: C
+
+- question: "Who should you reach out to if you are having trouble debugging or optimizing your PyTorch code?"
+  options:
+    A: "IT Support via the helpdesk portal"
+    B: "The MyMila portal administrators"
+    C: "The DRAC/Alliance support team"
+    D: "The IDT team via #mila-cluster or office hours"
+    E: "Your core professor's IT liaison"
+  answer: D
+
+- question: "To avoid I/O bottlenecks and maximize performance during a training job, what is the core data-staging pattern recommended on the Mila cluster?"
+  options:
+    A: "Reading directly from /network/datasets/ to avoid duplicating large files"
+    B: "Copying datasets to $SCRATCH and reading from there since it has a high-performance 5 TB quota"
+    C: "Copying your dataset to $SLURM_TMPDIR at the start of every job"
+    D: "Creating a symlink from $HOME to the dataset archive"
+    E: "Using Podman to mount /network/datasets/ directly into memory"
+  answer: C
+
+- question: "Which tool is recommended by Mila as a fast, drop-in replacement for pip and virtualenv to manage Python environments?"
+  options:
+    A: "conda"
+    B: "poetry"
+    C: "pipenv"
+    D: "uv"
+    E: "milatools"
+  answer: D
+
+- question: "When running a single-node, multi-GPU job (DDP) using '--gpus-per-task=1', what SLURM flag is strictly required to prevent NCCL from failing with a 'ncclUnhandledCudaError'?"
+  options:
+    A: "--constraint=nvlink"
+    B: "--exclusive"
+    C: "--gres-flags=allow-task-sharing"
+    D: "--rdzv_backend=c10d"
+    E: "--distribution=block:block"
+  answer: C
+
+- question: "When running jobs on the DRAC Rorqual cluster, what is a crucial limitation to keep in mind regarding compute nodes?"
+  options:
+    A: "They only support Docker, not Singularity"
+    B: "They do not have access to the internet"
+    C: "They automatically delete $SCRATCH data after 30 days"
+    D: "They do not allow job arrays for hyperparameter sweeps"
+    E: "They require jobs to use the 'main' partition"
+  answer: B
+
+- question: "During your first login to the MFA portal (mfa.mila.quebec), what must you use as your password before immediately adding a TOTP token?"
+  options:
+    A: "Your regular Mila email password"
+    B: "Your public SSH key passphrase"
+    C: "The one-time registration token sent by IT"
+    D: "A temporary code sent via SMS"
+    E: "Your cluster username"
+  answer: C
+
+- question: "If you need to build a heavy package like 'flash-attn' from source, which method is permitted and recommended?"
+  options:
+    A: "Running the build directly on a login node since it is just compiling code"
+    B: "Using 'ssh mila' to access a dedicated build node"
+    C: "Using 'ssh mila-cpu' to auto-allocate an interactive CPU compute node"
+    D: "Running it in a JupyterHub session from the Control Panel"
+    E: "Submitting a batch job to the 'long' partition with a 7-day time limit"
+  answer: C
+
+- question: "Where is the recommended location to set up your code repositories and small libraries on the Mila cluster?"
+  options:
+    A: "$SCRATCH"
+    B: "$SLURM_TMPDIR"
+    C: "$HOME"
+    D: "/network/projects/"
+    E: "$ARCHIVE"
+  answer: C
+
+- question: "What is the recommended method for sharing a directory securely with another user on the Mila cluster?"
+  options:
+    A: "Setting the directory permissions using 'chmod 770'"
+    B: "Moving the directory to /network/datasets/public/"
+    C: "Using 'setfacl' to apply inheritable access control lists"
+    D: "Creating a symlink in their $HOME directory"
+    E: "Using Podman to bind-mount the directory to their session"
+  answer: C
+
+- question: "If you are experiencing issues with an account creation, a hardware failure, or need to set up a VPN, which team should you contact?"
+  options:
+    A: "IDT via office hours"
+    B: "IT Support via the helpdesk portal or #mila-cluster"
+    C: "MyMila portal administrators"
+    D: "The DRAC/Alliance support team"
+    E: "The core professors' IT liaisons"
+  answer: B
+
+- question: "How can you access Mila-specific workflows (skills) when using the Claude Code AI assistant on the cluster?"
+  options:
+    A: "By running 'mila-claude --enable-skills' in the terminal"
+    B: "By installing the 'mila-tools' pip package globally"
+    C: "By using the '/plugin marketplace add mila-iqia/skills' slash command"
+    D: "By adding your Anthropic API key to the ~/.mila/config file"
+    E: "By loading the Claude module via 'module load claude/skills'"
+  answer: C
+
+- question: "Why might your job on the 'long' partition be interrupted or killed before its 7-day time limit is reached?"
+  options:
+    A: "Because it exceeded the 100 GB storage quota on $HOME"
+    B: "Because higher-priority jobs from the 'unkillable' or 'main' partitions preempted it"
+    C: "Because you did not use the '--requeue' flag in your submission script"
+    D: "Because jobs on 'long' are restricted to a maximum of 3 hours of continuous runtime"
+    E: "Because it attempted to access the internet, which is forbidden on compute nodes"
+  answer: B
+
+- question: "When using JupyterLab on the Mila cluster via JupyterHub, what must you do to access curated datasets located in '/network/datasets'?"
+  options:
+    A: "Mount the directory directly in the Hub Control Panel settings"
+    B: "Run 'mila init --jupyter' from your login node"
+    C: "Submit a support ticket to the IDT team for access"
+    D: "Create a symlink to '/network/datasets' within your $HOME directory"
+    E: "Upload the datasets manually through the JupyterLab web interface"
+  answer: D
+
+- question: "When training a model on the DRAC Rorqual cluster, what is the safest way to handle Weights & Biases (WandB) logging given the cluster's compute node constraints?"
+  options:
+    A: "Log normally, as Rorqual has full internet access on compute nodes"
+    B: "Use the 'httpproxy' module to handle WandB artifacts seamlessly"
+    C: "Set WANDB_MODE=offline during training and sync manually from the login node later"
+    D: "Pass the '--network=host' flag to your srun command"
+    E: "Save logs to $SCRATCH and email them to the WandB support team"
+  answer: C
+
+- question: "What is a key warning regarding the use of 'torch.autograd.set_detect_anomaly(True)' when debugging PyTorch code on the Mila cluster?"
+  options:
+    A: "It permanently alters the model weights and prevents convergence"
+    B: "It requires an active internet connection to download debugging symbols"
+    C: "It generates huge IOPS on the shared filesystem and should only be used interactively"
+    D: "It is incompatible with the 'uv' package manager"
+    E: "It limits the job to a single GPU, even if you requested multiple"
+  answer: C
+
+- question: "If your PyTorch training script is running slowly and you need help optimizing your data loaders, which team should you contact according to the documentation?"
+  options:
+    A: "The IT Support team via the helpdesk portal"
+    B: "The DRAC/Alliance support team"
+    C: "The MyMila portal administrators"
+    D: "The IDT team via #mila-cluster or during office hours"
+    E: "Your core professor's dedicated IT liaison"
+  answer: D
+
+- question: "How should you transfer files, such as a zipped dataset, from your local laptop to the Mila cluster?"
+  options:
+    A: "By uploading them through the JupyterHub web interface"
+    B: "Using the 'mila-tools sync' command"
+    C: "By submitting a support ticket to IT with the file attached"
+    D: "Using commands like 'scp' or 'rsync' directly in your terminal"
+    E: "By using the MyMila portal's built-in SFTP client"
+  answer: D
+
+- question: "Which SLURM partition on the Mila cluster is specifically designed for multi-GPU jobs, houses the H100 nodes, but enforces a strict 3-hour time limit?"
+  options:
+    A: "unkillable"
+    B: "short-unkillable"
+    C: "main"
+    D: "long"
+    E: "dgx-hopper"
+  answer: B
+
+- question: "If you want to use Visual Studio Code to develop code on the Mila cluster, what is the required method to avoid overloading shared resources?"
+  options:
+    A: "Using standard VSCode Remote-SSH to connect directly to login.server.mila.quebec"
+    B: "Running the VSCode Server binary manually on a login node"
+    C: "Using the 'mila code' command or connecting to the 'mila-cpu' SSH alias"
+    D: "Installing the Claude Code extension with '--dangerously-skip-permissions'"
+    E: "Mounting your $HOME directory locally using sshfs and editing locally"
+  answer: C
+
+- question: "To avoid severely degrading the shared filesystem performance, where must you absolutely NOT store your dataset and read from during active model training?"
+  options:
+    A: "$SLURM_TMPDIR"
+    B: "$SCRATCH"
+    C: "$HOME"
+    D: "/network/datasets/"
+    E: "The compute node's local SSD"
+  answer: C
+
+- question: "What happens to a job submitted to the 'long' partition if a higher-priority job from 'unkillable' or 'main' requires the same compute node?"
+  options:
+    A: "It is paused and written to swap memory until the node is free"
+    B: "It is killed immediately and re-queued on the same partition"
+    C: "It continues running but its CPU and GPU allocations are throttled"
+    D: "It is automatically moved to the 'main' partition"
+    E: "It is permanently cancelled and an email is sent to the user"
+  answer: B
+
+- question: "If you specifically need to run a job on a node equipped with NVIDIA L40S GPUs, which flag should you use in your SLURM submission script?"
+  options:
+    A: "--constraint=\"dgx&ampere\""
+    B: "--gres=gpu:a100:1"
+    C: "--partition=lovelace"
+    D: "--gpus-per-task=l40s:1"
+    E: "--feature=nvlink"
+  answer: D
+
+- question: "How do you gain access to submit jobs on DRAC clusters, such as Fir or Rorqual?"
+  options:
+    A: "Access is automatically granted and synced when your Mila account is created"
+    B: "You must run the 'mila init --drac' command from a login node"
+    C: "You must register on the CCDB portal and apply for a role using your sponsor's CCRI"
+    D: "You must submit an access request ticket to the Mila Helpdesk"
+    E: "You connect using your Mila SSH keys to a specific Alliance proxy server"
+  answer: C
+
+- question: "What is the data retention policy for files stored in the $SCRATCH directory on the Mila cluster?"
+  options:
+    A: "They are backed up daily and kept indefinitely as long as your account is active"
+    B: "They are automatically deleted as soon as your SLURM job ends"
+    C: "They are archived to $ARCHIVE if not accessed for 30 days"
+    D: "They have no backups and are automatically cleaned up after 90 days"
+    E: "They are securely synced to the DRAC clusters every night"
+  answer: D
+
+- question: "Why must you allocate resources (e.g., using 'salloc' or 'sbatch') before running a heavy computational script on the cluster?"
+  options:
+    A: "Because login nodes are shared entry points where heavy compute is strictly forbidden"
+    B: "Because PyTorch cannot detect GPUs unless the 'uv run' command is prefixed with 'salloc'"
+    C: "Because the Multi-Factor Authentication (MFA) portal requires a valid Job ID"
+    D: "Because network datasets are encrypted and SLURM manages the decryption keys"
+    E: "Because the 'mila tools' CLI requires an active job to function"
+  answer: A
