@@ -268,3 +268,62 @@ def test_evaluate_llm_without_docs_no_url_tool():
         assert not any(isinstance(t, types.Tool) and t.url_context is not None for t in tools), (
             "Did not expect a UrlContext tool when with_docs=False"
         )
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible backend
+# ---------------------------------------------------------------------------
+
+
+def _fake_chat_completion(content: str) -> MagicMock:
+    http_response = MagicMock()
+    http_response.json.return_value = {"choices": [{"message": {"content": content}}]}
+    return http_response
+
+
+def test_ask_question_openai_model(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    with patch(
+        "docmetrics.main.httpx.post",
+        return_value=_fake_chat_completion('{"answer": "B", "justification": "..."}'),
+    ) as post:
+        result = ask_question(
+            client=None,
+            question=QUESTIONS[1],
+            with_docs=False,
+            model="openai:some/model",
+            docs_urls=None,
+            tools=None,
+            openai_url="http://litellm:8080/v1/",
+        )
+    assert result == "B"
+    (url,), kwargs = post.call_args
+    assert url == "http://litellm:8080/v1/chat/completions"
+    assert kwargs["json"]["model"] == "some/model"
+    assert kwargs["headers"] == {"Authorization": "Bearer sk-test"}
+
+
+def test_ask_question_openai_model_fallback_parsing():
+    with patch("docmetrics.main.httpx.post", return_value=_fake_chat_completion("\n\nB")):
+        result = ask_question(
+            client=None,
+            question=QUESTIONS[1],
+            with_docs=False,
+            model="openai:some/model",
+            docs_urls=None,
+            tools=None,
+        )
+    assert result == "B"
+
+
+def test_evaluate_llm_openai_model_skips_google_client():
+    with (
+        patch("docmetrics.main.get_google_genai_client") as get_client,
+        patch(
+            "docmetrics.main.httpx.post",
+            return_value=_fake_chat_completion('{"answer": "A"}'),
+        ),
+    ):
+        result = evaluate_llm(QUESTIONS, with_docs=False, model="openai:some/model")
+    get_client.assert_not_called()
+    assert result.num_questions == len(QUESTIONS)
