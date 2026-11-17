@@ -35,6 +35,11 @@ MAX_TOOL_CALLS = 5
 """Maximum number of tool calls allowed per question before giving up."""
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
 """Default base URL for the Ollama server."""
+OPENAI_PREFIX = "openai:"
+"""Prefix for models served by an OpenAI-compatible API (OpenAI, LiteLLM, vLLM, ...),
+e.g. 'openai:Qwen/Qwen3.8-Flash-Next-FP8'. The API key is read from `OPENAI_API_KEY`."""
+OPENAI_DEFAULT_URL = "https://api.openai.com/v1"
+"""Default base URL for OpenAI-compatible models (overridable with `OPENAI_BASE_URL`)."""
 __all__ = [
     "evaluate_llm",
     "ask_question",
@@ -144,6 +149,47 @@ def _ollama_model_name(model: str) -> str:
     'qwen3-coder-next:latest'
     """
     return model.removeprefix(OLLAMA_PREFIX)
+
+
+def _is_openai_model(model: str) -> bool:
+    return model.startswith(OPENAI_PREFIX)
+
+
+def _get_agent_answer_openai(model: str, prompt: str, base_url: str) -> "Response | None":
+    """Asks a question to a model served by an OpenAI-compatible chat completions API.
+
+    Docs are expected to already be inlined in the prompt (no tool use).
+    """
+    load_dotenv()  # read the OPENAI_API_KEY from the .env file if present.
+    api_key = os.environ.get("OPENAI_API_KEY")
+    schema = Response.model_json_schema()
+    full_prompt = (
+        prompt
+        + f"\nRespond with a JSON object matching this schema: {json.dumps(schema)}\n"
+        + 'Example: {"answer": "A", "justification": "Because..."}'
+    )
+    try:
+        http_response = httpx.post(
+            base_url.rstrip("/") + "/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"} if api_key else None,
+            json={
+                "model": model.removeprefix(OPENAI_PREFIX),
+                "messages": [{"role": "user", "content": full_prompt}],
+                "response_format": {"type": "json_object"},
+            },
+            timeout=300,
+        )
+        http_response.raise_for_status()
+        content = http_response.json()["choices"][0]["message"]["content"]
+    except (httpx.HTTPError, KeyError, IndexError) as e:
+        logger.warning(f"OpenAI-compatible API request failed: {e}")
+        return None
+    if not content:
+        return None
+    try:
+        return Response.model_validate_json(content)
+    except pydantic.ValidationError:
+        return parse_response_fallback(content)
 
 
 @functools.cache
@@ -318,6 +364,7 @@ def evaluate_llm(
     docs_urls: list[str] | None = None,
     docs_files: list[Path] | None = None,
     ollama_url: str = OLLAMA_DEFAULT_URL,
+    openai_url: str | None = None,
     num_candidates: int = 1,
     # tools: Sequence[types.Tool | Callable] | None = None,
 ) -> EvaluationResult:
@@ -331,6 +378,8 @@ def evaluate_llm(
     docs_urls: A list of URLs to relevant documentation pages to provide as context.
     docs_files: A list of local file paths whose content will be inlined into the prompt.
     ollama_url: Base URL of the Ollama server (only used when model has the 'ollama:' prefix).
+    openai_url: Base URL of the OpenAI-compatible API (only used when model has the 'openai:' prefix).
+        Defaults to the `OPENAI_BASE_URL` environment variable, then to the OpenAI API.
     num_candidates: Number of times to ask each question. Scores are averaged across candidates.
 
     Returns
@@ -341,7 +390,11 @@ def evaluate_llm(
     Notes
     - Could also input a list of tools to give to the agent, in addition to URL search.
     """
-    client = None if model == DUMMY_MODEL or _is_ollama_model(model) else get_google_genai_client()
+    client = (
+        None
+        if model == DUMMY_MODEL or _is_ollama_model(model) or _is_openai_model(model)
+        else get_google_genai_client()
+    )
     num_questions = len(questions)
 
     docs_content: str | None = None
@@ -351,10 +404,11 @@ def evaluate_llm(
         with_docs
         and docs_urls
         and not _is_ollama_model(model)
-        and any(_is_local_url(u) for u in docs_urls)
+        and (_is_openai_model(model) or any(_is_local_url(u) for u in docs_urls))
     ):
-        # Google's url_context tool runs server-side and can't reach localhost URLs; pre-fetch them.
-        logger.info(f"Pre-fetching {len(docs_urls)} documentation URL(s) (localhost detected)...")
+        # Google's url_context tool runs server-side and can't reach localhost URLs, and
+        # OpenAI-compatible models are called without tools; pre-fetch the docs for both.
+        logger.info(f"Pre-fetching {len(docs_urls)} documentation URL(s)...")
         docs_content = "\n---\n".join(_fetch_url(u) for u in docs_urls)
 
     # TODO: Group questions based on the docs pages they require and use the batch API
@@ -384,6 +438,7 @@ def evaluate_llm(
                 docs_urls=docs_urls,
                 docs_content=docs_content,
                 ollama_url=ollama_url,
+                openai_url=openai_url,
                 # Adding this gives the LLM the ability to consult URLs given in the prompt.
                 # Not needed (or wanted) when docs are already inlined or for Ollama models.
                 tools=(
@@ -417,6 +472,7 @@ def ask_question(
     tools: list[types.Tool | Callable] | None,
     docs_content: str | None = None,
     ollama_url: str = OLLAMA_DEFAULT_URL,
+    openai_url: str | None = None,
     question_index: int | None = None,
     num_questions: int | None = None,
     candidate_index: int | None = None,
@@ -435,6 +491,21 @@ def ask_question(
         dummy_answer = random.choice(list(question.options.keys()))
         logger.info(f"{q_prefix}Correct answer: {question.answer}, dummy answer: {dummy_answer}")
         return dummy_answer
+
+    if _is_openai_model(model):
+        prompt = make_prompt(
+            question, with_docs=with_docs, docs_urls=docs_urls, docs_content=docs_content
+        )
+        logger.debug(f"{q_prefix}Prompt sent to LLM: {prompt}")
+        base_url = openai_url or os.environ.get("OPENAI_BASE_URL") or OPENAI_DEFAULT_URL
+        agent_answer = _get_agent_answer_openai(model, prompt, base_url)
+        if not agent_answer:
+            logger.error(f"{q_prefix}LLM's answer couldn't be parsed!")
+            return None
+        logger.info(
+            f"{q_prefix}Correct answer: {question.answer}, LLM's answer: {agent_answer.answer}"
+        )
+        return agent_answer.answer
 
     if _is_ollama_model(model):
         prompt = make_prompt(
@@ -631,7 +702,7 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         "--model",
         type=str,
         default="gemini-2.5-flash",
-        help='LLM model to use (e.g. "gemini-2.5-flash", "ollama:qwen3-coder-next:latest"). Use "test:dummy" for random answers without any API calls.',
+        help='LLM model to use (e.g. "gemini-2.5-flash", "ollama:qwen3-coder-next:latest", "openai:gpt-4o-mini"). Use "test:dummy" for random answers without any API calls.',
     )
     p.add_argument(
         "--docs-url",
@@ -651,6 +722,13 @@ def _add_evaluate_args(p: argparse.ArgumentParser, questions_required: bool = Tr
         type=str,
         default=OLLAMA_DEFAULT_URL,
         help=f"Base URL of the Ollama server (default: {OLLAMA_DEFAULT_URL}). Only used with 'ollama:' models.",
+    )
+    p.add_argument(
+        "--openai-url",
+        type=str,
+        default=None,
+        help=f"Base URL of an OpenAI-compatible API (default: $OPENAI_BASE_URL or {OPENAI_DEFAULT_URL}). "
+        "Only used with 'openai:' models. The API key is read from $OPENAI_API_KEY.",
     )
     p.add_argument(
         "--num-candidates",
@@ -719,6 +797,7 @@ def main():
     docs_urls: list[str] | None = args.docs_url if args.docs_url else None
     docs_files: list[Path] | None = args.docs_file if args.docs_file else None
     ollama_url: str = args.ollama_url
+    openai_url: str | None = args.openai_url
     num_candidates: int = args.num_candidates
     if docs_urls and docs_files:
         parser.error("--docs-url and --docs-file are mutually exclusive.")
@@ -731,6 +810,7 @@ def main():
             docs_urls=docs_urls,
             docs_files=docs_files,
             ollama_url=ollama_url,
+            openai_url=openai_url,
             num_candidates=num_candidates,
         )
     else:
@@ -740,6 +820,7 @@ def main():
         with_docs=False,
         model=model,
         ollama_url=ollama_url,
+        openai_url=openai_url,
         num_candidates=num_candidates,
     )
 
